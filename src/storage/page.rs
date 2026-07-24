@@ -687,15 +687,18 @@ impl DiskManager {
         let mut header = FileHeader::default();
         let metadata = file.metadata()?;
 
-        if metadata.len() > 0 {
-            let mut buffer = [0u8; 28]; // 4 + 8 + 8 + 8 = 28
-            file.read_exact_at(&mut buffer, 0)?;
+        match metadata.len().cmp(&0) {
+            Ordering::Greater => {
+                let mut buffer = [0u8; 28]; // 4 + 8 + 8 + 8 = 28
+                file.read_exact_at(&mut buffer, 0)?;
 
-            let mut cursor = ByteCursor::new(&mut buffer);
-            header.last_row_id = cursor.read_u32();
-            header.page_root_offset = cursor.read_u64();
-            header.next_lsn = cursor.read_u64();
-            header.next_free_offset = cursor.read_u64();
+                let mut cursor = ByteCursor::new(&mut buffer);
+                header.last_row_id = cursor.read_u32();
+                header.page_root_offset = cursor.read_u64();
+                header.next_lsn = cursor.read_u64();
+                header.next_free_offset = cursor.read_u64();
+            }
+            _ => {}
         }
         Ok(Self { file, header })
     }
