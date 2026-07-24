@@ -7,6 +7,7 @@ use crate::{
 };
 
 /// Represents a B+ Tree access method backed by slotted page `LeafNode`s.
+#[derive(Debug)]
 pub struct BpTree<'a> {
     /// Mutable reference to the centralized Buffer Pool conveyor belt.
     buffer_pool: &'a mut BufferPool,

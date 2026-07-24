@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use parking_lot::RwLock;
 
@@ -11,7 +11,7 @@ use crate::{
 };
 
 /// Decouples the memory manager from the physical Wal implementation.
-pub trait WalFlusher: Send + Sync {
+pub trait WalFlusher: Debug + Send + Sync {
     /// Forces the Wal manager to synchronously write and fsync all
     /// log records up-to and including the specified lsn, out to
     /// the non-volatile disk.
@@ -23,6 +23,7 @@ pub trait WalFlusher: Send + Sync {
 pub type Frame = Arc<RwLock<BTreeNode>>;
 
 /// Handles memory caching, page fetching, and eviction.
+#[derive(Debug)]
 pub struct BufferPool {
     disk_manager: DiskManager,
     replacer: LruReplacer,
