@@ -94,7 +94,7 @@ pub enum NodeType {
 #[derive(Debug, Default, Clone)]
 pub struct IndexEntry {
     pub key: u64,
-    pub child_page_id: u64,
+    pub child_page_id: PageId,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -119,23 +119,127 @@ pub struct InternalNode {
 }
 
 impl InternalNode {
+    /// Inserts the promoted key and its page id in the index entries.
+    /// Swaps the child_page pointers to maintain consistency.
+    pub fn insert_entry(&mut self, entry_key: u64, new_child_page: PageId) -> Result<(), DbError> {
+        let required_bytes = INDEX_ENTRY_SIZE + SLOT_ELEM_SIZE;
+
+        let current_size = INTERNAL_NODE_HEADER_SIZE
+            + (self.slot_array.len() * (INDEX_ENTRY_SIZE + SLOT_ELEM_SIZE));
+
+        if current_size + required_bytes >= PAGE_SIZE {
+            return Err(DbError::PageFull);
+        }
+        let insert_idx = self.slot_array.partition_point(|&entry_idx| {
+            let entry = &self.entries[entry_idx as usize];
+            entry.key <= entry_key
+        });
+        let new_left_child: PageId;
+
+        if insert_idx == self.slot_array.len() {
+            // Appending to the far right; so, the rightmost child now
+            // becomes the left child of the new key.
+            new_left_child = self.rightmost_child_id;
+            self.rightmost_child_id = new_child_page;
+        } else {
+            // Appending somewhere in the middle; so, the left child of
+            // the new key is the child that was already present at the
+            // insert idx.
+            let entry_idx = self.slot_array[insert_idx] as usize;
+            new_left_child = self.entries[entry_idx].child_page_id;
+            // The pre-existing entry now points to the new child page.
+            self.entries[entry_idx].child_page_id = new_child_page;
+        }
+        let new_entry_idx = self.entries.len() as u16;
+        self.entries.push(IndexEntry {
+            key: entry_key,
+            child_page_id: new_left_child,
+        });
+        self.slot_array.insert(insert_idx, new_entry_idx);
+
+        if (self.free_size as usize) >= required_bytes {
+            self.free_size -= required_bytes as u16;
+        } else {
+            self.free_size = 0;
+        }
+        Ok(())
+    }
+
+    /// Splits an InternalNode into half, filling the given new_sibling with the
+    /// other half of the data; and pushes the middle key upwards - removing it
+    /// from this level.
+    ///
+    /// Returns the middle key that was removed from this node.
+    pub fn split(&mut self, new_sibling: &mut InternalNode) -> Result<u64, DbError> {
+        let mid = self.slot_array.len() / 2;
+
+        let slot_idx = self.slot_array[mid] as usize;
+        let promoted_entry = self.entries[slot_idx].clone();
+
+        for &slot_idx in &self.slot_array[mid + 1..] {
+            let entry_idx = self.slot_array[slot_idx as usize] as usize;
+            let entry = self.entries[entry_idx].clone();
+
+            let new_idx = new_sibling.entries.len();
+            new_sibling.entries.push(entry);
+            new_sibling.slot_array.push(new_idx as u16);
+        }
+        new_sibling.rightmost_child_id = self.rightmost_child_id;
+
+        // The middle entry's (the promoted one) page_id becomes the rightmost
+        // child page id.
+        self.rightmost_child_id = promoted_entry.child_page_id;
+
+        // We remove everything till but not including the mid slot element.
+        self.slot_array.truncate(mid);
+        self.compact();
+        new_sibling.compact(); // This line isn't necessary but I'm being safe.
+        Ok(promoted_entry.key)
+    }
+
+    /// Re-writes the entries into a clean vector ordered by slot index and also
+    /// adjusts `self.free_size` according to how much space is left.
+    pub fn compact(&mut self) {
+        let mut clean_entries = Vec::with_capacity(self.entries.len());
+        let mut new_slots = Vec::with_capacity(self.slot_array.len());
+        let mut bytes_used = 0;
+
+        for (new_idx, &old_idx) in self.slot_array.iter().enumerate() {
+            let entry = &self.entries[old_idx as usize];
+            bytes_used += INDEX_ENTRY_SIZE + SLOT_ELEM_SIZE;
+
+            clean_entries.push(entry.clone());
+            new_slots.push(new_idx as u16);
+        }
+        self.entries = clean_entries;
+        self.slot_array = new_slots;
+
+        let net_size = INTERNAL_NODE_HEADER_SIZE + bytes_used;
+        if net_size > PAGE_SIZE {
+            self.free_size = 0;
+        } else {
+            self.free_size = (PAGE_SIZE - net_size) as u16;
+        }
+    }
+
     /// Evaluates internal routing brackets using O(log N) binary search to determine
     /// the PageId of the child node containing `target_key`.
     pub fn route_key(&self, target_key: u64) -> Result<PageId, DbError> {
-        let partition_idx = self.slot_array.partition_point(|&slot_idx| {
+        let slot_idx = self.slot_array.partition_point(|&entry_idx| {
             // Find the first index where entry.key > target_key as that is
             // the internal node-point pointing to the leaf where the
             // key-val exists
-            let entry_key = self.entries[slot_idx as usize].key;
+            let entry_key = self.entries[entry_idx as usize].key;
             entry_key <= target_key
         });
         // If partition_idx == len(), target_key is >= all routing keys in
         // this node. Route to the rightmost child pointer
-        if partition_idx == self.slot_array.len() {
+        if slot_idx == self.slot_array.len() {
             Ok(self.rightmost_child_id)
         } else {
-            let page_id = self.entries[self.slot_array[partition_idx] as usize].child_page_id;
-            Ok(PageId(page_id))
+            let entry_idx = self.slot_array[slot_idx] as usize;
+            let page_id = self.entries[entry_idx].child_page_id;
+            Ok(page_id)
         }
     }
 }
@@ -198,10 +302,9 @@ impl LeafNode {
 
         for &rec_idx in self.slot_array[mid..].iter() {
             let rec = &self.records[rec_idx as usize];
+            let new_idx = new_sibling.records.len();
             new_sibling.records.push(rec.clone());
-            new_sibling
-                .slot_array
-                .push((new_sibling.records.len() - 1) as u16);
+            new_sibling.slot_array.push(new_idx as u16);
         }
         self.slot_array.truncate(mid);
 
@@ -559,7 +662,7 @@ impl BTreeNode {
 
                     entries[entry_idx as usize] = IndexEntry {
                         key,
-                        child_page_id: child_index,
+                        child_page_id: PageId(child_index),
                     };
                 }
                 Ok(BTreeNode::Internal(InternalNode {
@@ -642,7 +745,7 @@ impl BTreeNode {
                 for &offset in &node.slot_array {
                     let cell = &node.entries[offset as usize];
                     cursor.write_u64(cell.key);
-                    cursor.write_u64(cell.child_page_id);
+                    cursor.write_u64(cell.child_page_id.into());
                 }
             }
         }
@@ -687,18 +790,15 @@ impl DiskManager {
         let mut header = FileHeader::default();
         let metadata = file.metadata()?;
 
-        match metadata.len().cmp(&0) {
-            Ordering::Greater => {
-                let mut buffer = [0u8; 28]; // 4 + 8 + 8 + 8 = 28
-                file.read_exact_at(&mut buffer, 0)?;
+        if metadata.len().cmp(&0) == Ordering::Greater {
+            let mut buffer = [0u8; 28]; // 4 + 8 + 8 + 8 = 28
+            file.read_exact_at(&mut buffer, 0)?;
 
-                let mut cursor = ByteCursor::new(&mut buffer);
-                header.last_row_id = cursor.read_u32();
-                header.page_root_offset = cursor.read_u64();
-                header.next_lsn = cursor.read_u64();
-                header.next_free_offset = cursor.read_u64();
-            }
-            _ => {}
+            let mut cursor = ByteCursor::new(&mut buffer);
+            header.last_row_id = cursor.read_u32();
+            header.page_root_offset = cursor.read_u64();
+            header.next_lsn = cursor.read_u64();
+            header.next_free_offset = cursor.read_u64();
         }
         Ok(Self { file, header })
     }
@@ -913,15 +1013,15 @@ mod tests {
         let entries = vec![
             IndexEntry {
                 key: 100,
-                child_page_id: 2,
+                child_page_id: PageId(2),
             },
             IndexEntry {
                 key: 200,
-                child_page_id: 3,
+                child_page_id: PageId(3),
             },
             IndexEntry {
                 key: 300,
-                child_page_id: 4,
+                child_page_id: PageId(4),
             },
         ];
         let internal = InternalNode {
@@ -943,7 +1043,7 @@ mod tests {
             assert_eq!(dec_internal.rightmost_child_id, PageId(5));
             assert_eq!(dec_internal.slot_array.len(), 3);
             assert_eq!(dec_internal.entries[1].key, 200);
-            assert_eq!(dec_internal.entries[1].child_page_id, 3);
+            assert_eq!(dec_internal.entries[1].child_page_id, PageId(3));
         } else {
             panic!("Expected BTreeNode::Internal");
         }
