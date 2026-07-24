@@ -691,10 +691,11 @@ impl DiskManager {
             let mut buffer = [0u8; 28]; // 4 + 8 + 8 + 8 = 28
             file.read_exact_at(&mut buffer, 0)?;
 
-            header.last_row_id = u32::from_le_bytes(buffer[0..4].try_into().unwrap());
-            header.page_root_offset = u64::from_le_bytes(buffer[4..12].try_into().unwrap());
-            header.next_lsn = u64::from_le_bytes(buffer[12..20].try_into().unwrap());
-            header.next_free_offset = u64::from_le_bytes(buffer[20..28].try_into().unwrap());
+            let mut cursor = ByteCursor::new(&mut buffer);
+            header.last_row_id = cursor.read_u32();
+            header.page_root_offset = cursor.read_u64();
+            header.next_lsn = cursor.read_u64();
+            header.next_free_offset = cursor.read_u64();
         }
         Ok(Self { file, header })
     }
@@ -720,11 +721,12 @@ impl DiskManager {
 
     pub fn save_header(&self) -> Result<(), DbError> {
         let mut buffer = [0u8; 28];
+        let mut cursor = ByteCursor::new(&mut buffer);
 
-        buffer[0..4].copy_from_slice(&self.header.last_row_id.to_le_bytes());
-        buffer[4..12].copy_from_slice(&self.header.page_root_offset.to_le_bytes());
-        buffer[12..20].copy_from_slice(&self.header.next_lsn.to_le_bytes());
-        buffer[20..28].copy_from_slice(&self.header.next_free_offset.to_le_bytes());
+        cursor.write_u32(self.header.last_row_id);
+        cursor.write_u64(self.header.page_root_offset);
+        cursor.write_u64(self.header.next_lsn);
+        cursor.write_u64(self.header.next_free_offset);
 
         self.file.write_all_at(&buffer, 0)?;
         self.file.sync_all()?;
