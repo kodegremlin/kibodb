@@ -2,7 +2,7 @@ use crate::{
     error::DbError,
     storage::{
         buffer_pool::BufferPool,
-        page::{BTreeNode, PageId},
+        page::{BTreeNode, IndexEntry, PageId},
     },
 };
 
@@ -20,7 +20,7 @@ pub struct BpTree<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SplitResult {
     /// The primary key that divides the left and right leaf pages.
-    pub promoted_row_id: u64,
+    pub promoted_key: u64,
 
     /// The physical `PageId` of the newly allocated right sibling leaf.
     pub new_page_id: PageId,
@@ -40,6 +40,136 @@ impl<'a> BpTree<'a> {
         self.root_page_id
     }
 
+    /// Inserts a new record into the current leaf page. If physical page limit is
+    /// met, then it splits the current page and the promoted keys are propogated
+    /// upwards, increasing the tree height incase the root splits.
+    pub fn insert(&mut self, row_id: u64, payload: Vec<u8>, lsn: u64) -> Result<(), DbError> {
+        let mut parents = Vec::new();
+        let mut curr_page_id = self.root_page_id;
+
+        // Traverses down to the leaf, storing the parent stack.
+        loop {
+            let frame = self.buffer_pool.fetch_page(curr_page_id)?;
+            let node_guard = frame.write();
+            match &*node_guard {
+                BTreeNode::Internal(node) => {
+                    let next_page_id = node.route_key(row_id)?;
+                    parents.push(curr_page_id);
+                    curr_page_id = next_page_id;
+                }
+                _ => break, // reached the leaf.
+            }
+        }
+        let mut split_res = self.insert_leaf(curr_page_id, row_id, payload, lsn)?;
+
+        // Propogate splits upward using the path stack.
+        while let Some(split) = split_res {
+            match parents.pop() {
+                Some(parent_id) => {
+                    // Parent exists, attempt internal insertion.
+                    split_res = self.insert_internal(
+                        parent_id,
+                        split.promoted_key,
+                        split.new_page_id,
+                        lsn,
+                    )?;
+                }
+                None => {
+                    // No parent exists, stack empty; meaning the root split.
+                    self.split_root(
+                        split.promoted_key,
+                        self.root_page_id,
+                        split.new_page_id,
+                        lsn,
+                    )?;
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Increases the height of the tree by allocating a brand new root `InternalNode`.
+    fn split_root(
+        &mut self,
+        promoted_key: u64,
+        left_child_id: PageId, // old root
+        right_child_id: PageId,
+        lsn: u64,
+    ) -> Result<(), DbError> {
+        let (root_id, root_frame) = self.buffer_pool.new_page(false)?;
+        let mut root_guard = root_frame.write();
+
+        if let BTreeNode::Internal(ref mut new_root) = *root_guard {
+            new_root.rightmost_child_id = right_child_id;
+            new_root.entries.push(IndexEntry {
+                key: promoted_key,
+                child_page_id: left_child_id,
+            });
+            new_root.slot_array = vec![0];
+        }
+        root_guard.mark_dirty(lsn);
+
+        // update the active root Id.
+        self.root_page_id = root_id;
+        Ok(())
+    }
+
+    /// Inserts an entry to the internal node after a leaf splits and promotes
+    /// the key upwards. If physical capacity is exceeded, it allocates a new
+    /// page from the `BufferPool`, splits the current page into half writing
+    /// other half of the data into the newly allocated sibling page and also
+    /// performs compaction.
+    ///
+    /// Returns the `promoted_key` and the `new_page_id` if split happens as
+    /// `Some(SplitResult)` or `None` if data was written to the current page only.
+    fn insert_internal(
+        &mut self,
+        parent_id: PageId,
+        promoted_key: u64,
+        next_page_id: PageId,
+        lsn: u64,
+    ) -> Result<Option<SplitResult>, DbError> {
+        let parent_frame = self.buffer_pool.fetch_page(parent_id)?;
+        let mut node_guard = parent_frame.write();
+
+        let BTreeNode::Internal(ref mut parent_node) = *node_guard else {
+            return Err(DbError::CorruptPage(
+                "expected internal node during upward key propogation".into(),
+            ));
+        };
+        match parent_node.insert_entry(promoted_key, next_page_id) {
+            Err(DbError::PageFull) => {
+                let (new_page_id, new_frame) = self.buffer_pool.new_page(false)?;
+                let mut internal_guard = new_frame.write();
+
+                let BTreeNode::Internal(ref mut new_internal) = *internal_guard else {
+                    unreachable!();
+                };
+                let new_promoted_key = parent_node.split(new_internal)?;
+
+                // Insert the pending entry key into whichever sibling now owns its branch.
+                if promoted_key < new_promoted_key {
+                    parent_node.insert_entry(promoted_key, next_page_id)?;
+                } else {
+                    new_internal.insert_entry(promoted_key, next_page_id)?;
+                }
+                parent_node.mark_dirty(lsn);
+                new_internal.mark_dirty(lsn);
+
+                Ok(Some(SplitResult {
+                    promoted_key: new_promoted_key,
+                    new_page_id,
+                }))
+            }
+            Ok(()) => {
+                parent_node.mark_dirty(lsn);
+                Ok(None)
+            }
+            Err(db_error) => Err(db_error),
+        }
+    }
+
     /// Inserts a key-value payload directly into a target leaf page. If physical
     /// capacity is exceeded, allocates a sibling page from the `BufferPool`,
     /// splits the current leaf into half writing the other half of the data into
@@ -47,7 +177,7 @@ impl<'a> BpTree<'a> {
     ///
     /// Returns the `promoted_row_id` and the `new_page_id` if split happens as
     /// `Some(SplitResult)` or `None` if data was written to the current page only.
-    pub fn insert_leaf(
+    fn insert_leaf(
         &mut self,
         leaf_page_id: PageId,
         row_id: u64,
@@ -121,7 +251,7 @@ impl<'a> BpTree<'a> {
         new_node_guard.mark_dirty(lsn);
 
         Ok(Some(SplitResult {
-            promoted_row_id,
+            promoted_key: promoted_row_id,
             new_page_id: new_leaf_id,
         }))
     }
@@ -217,9 +347,9 @@ mod tests {
         }
         let split = split_res.expect("leaf failed to split exceeding 4KB capacity!");
         assert!(
-            split.promoted_row_id >= 5,
+            split.promoted_key >= 5,
             "row_id smaller than expected {}",
-            split.promoted_row_id
+            split.promoted_key
         );
         assert_ne!(split.new_page_id, root_id);
 
@@ -243,12 +373,36 @@ mod tests {
 
                 assert_eq!(
                     right.records[right.slot_array[0] as usize].row_id,
-                    split.promoted_row_id
+                    split.promoted_key
                 );
                 assert!(left.free_size > 1500, "compaction failed to reclaim")
             }
             _ => panic!("expected btree leaf nodes"),
         }
         let _ = fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn test_insertions_and_root_splits() {
+        let (mut pool, db_path) = setup_pool("insertions_root_split");
+
+        let (root_id, _) = pool.new_page(true).unwrap();
+        let mut btree = BpTree::new(&mut pool, root_id);
+
+        let large_payload = vec![42u8; 400];
+
+        for key in 1..=500 {
+            btree
+                .insert(key, large_payload.clone(), key)
+                .unwrap();
+        }
+        assert_ne!(btree.get_root_id(), root_id);
+
+        for key in 1..=500 {
+            let res = btree.find_record(key).expect("Lookup Failed");
+            assert!(res.is_some(), "key {} missing after splits", key);
+            assert_eq!(res.unwrap().len(), 400, "wrong data size");
+        }
+        fs::remove_file(db_path).unwrap();
     }
 }

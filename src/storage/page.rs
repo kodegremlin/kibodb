@@ -119,6 +119,37 @@ pub struct InternalNode {
 }
 
 impl InternalNode {
+    /// Returns true if the node has been modified in memory since being loaded
+    /// from disk.
+    pub fn is_dirty(&self) -> bool {
+        self.is_dirty
+    }
+
+    /// Clears the dirty flag, signifying the node to be unmodified. Must be
+    /// called immediately after the Buffer Pool successfully write the page
+    /// to the disk.
+    pub fn clear_dirty(&mut self) {
+        self.is_dirty = false
+    }
+
+    /// Marks the node as dirty :) hehe, and updates its last (LSN).
+    pub fn mark_dirty(&mut self, lsn: u64) {
+        self.last_lsn = lsn;
+        self.is_dirty = true;
+    }
+
+    /// Returns the LSN of the last update applied to this node.
+    pub fn get_last_lsn(&self) -> u64 {
+        self.last_lsn
+    }
+
+    /// Sets the provided lsn as `last_lsn` according to the node type.
+    pub fn set_last_lsn(&mut self, lsn: u64) {
+        self.last_lsn = lsn;
+    }
+}
+
+impl InternalNode {
     /// Inserts the promoted key and its page id in the index entries.
     /// Swaps the child_page pointers to maintain consistency.
     pub fn insert_entry(&mut self, entry_key: u64, new_child_page: PageId) -> Result<(), DbError> {
@@ -259,6 +290,37 @@ pub struct LeafNode {
     /// Tracks if the node was modified in memory. Excluded from encoding
     /// decoding.
     pub is_dirty: bool,
+}
+
+impl LeafNode {
+    /// Returns true if the node has been modified in memory since being loaded
+    /// from disk.
+    pub fn is_dirty(&self) -> bool {
+        self.is_dirty
+    }
+
+    /// Clears the dirty flag, signifying the node to be unmodified. Must be
+    /// called immediately after the Buffer Pool successfully write the page
+    /// to the disk.
+    pub fn clear_dirty(&mut self) {
+        self.is_dirty = false
+    }
+
+    /// Marks the node as dirty :) hehe, and updates its last (LSN).
+    pub fn mark_dirty(&mut self, lsn: u64) {
+        self.last_lsn = lsn;
+        self.is_dirty = true;
+    }
+
+    /// Returns the LSN of the last update applied to this node.
+    pub fn get_last_lsn(&self) -> u64 {
+        self.last_lsn
+    }
+
+    /// Sets the provided lsn as `last_lsn` according to the node type.
+    pub fn set_last_lsn(&mut self, lsn: u64) {
+        self.last_lsn = lsn;
+    }
 }
 
 impl LeafNode {
