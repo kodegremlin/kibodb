@@ -156,7 +156,7 @@ impl LruReplacer {
         let mut curr_idx = self.tail_idx;
 
         while let Some(node_idx) = curr_idx {
-            if candidates.len() > limit {
+            if candidates.len() >= limit {
                 break;
             }
             candidates.push(self.arena[node_idx].page_id);

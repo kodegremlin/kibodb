@@ -100,14 +100,15 @@ impl<'a> BpTree<'a> {
         let (root_id, root_frame) = self.buffer_pool.new_page(false)?;
         let mut root_guard = root_frame.write();
 
-        if let BTreeNode::Internal(ref mut new_root) = *root_guard {
-            new_root.rightmost_child_id = right_child_id;
-            new_root.entries.push(IndexEntry {
-                key: promoted_key,
-                child_page_id: left_child_id,
-            });
-            new_root.slot_array = vec![0];
-        }
+        let BTreeNode::Internal(ref mut new_root) = *root_guard else {
+            unreachable!("new_page(false) must return an Internal Node");
+        };
+        new_root.rightmost_child_id = right_child_id;
+        new_root.entries.push(IndexEntry {
+            key: promoted_key,
+            child_page_id: left_child_id,
+        });
+        new_root.slot_array = vec![0];
         root_guard.mark_dirty(lsn);
 
         // update the active root Id.
@@ -135,7 +136,7 @@ impl<'a> BpTree<'a> {
 
         let BTreeNode::Internal(ref mut parent_node) = *node_guard else {
             return Err(DbError::CorruptPage(
-                "expected internal node during upward key propogation".into(),
+                "expected internal node during upward key propagation".into(),
             ));
         };
         match parent_node.insert_entry(promoted_key, next_page_id) {
@@ -256,7 +257,7 @@ impl<'a> BpTree<'a> {
         }))
     }
 
-    /// Executes a binary search to retreive a record payload by the given primary
+    /// Executes a binary search to retrieve a record payload by the given primary
     /// key a.k.a. row_id.
     ///
     /// Returns an owned copy of the payload if found and not logically deleted.

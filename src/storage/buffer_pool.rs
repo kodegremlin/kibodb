@@ -92,7 +92,7 @@ impl BufferPool {
     /// Flushes a specific page to disk if it is dirty.
     pub fn flush_page(&mut self, page_id: PageId) -> Result<(), DbError> {
         if let Some(frame) = self.page_table.get(&page_id) {
-            let mut node_guard = frame.write();
+            let mut node_guard = frame.upgradable_read();
 
             if node_guard.is_dirty() {
                 if let Some(flusher) = &self.wal_flusher {
@@ -101,7 +101,7 @@ impl BufferPool {
                 let mut raw_page = Page::new();
                 node_guard.encode(&mut raw_page)?;
                 self.disk_manager.write_page(page_id, &raw_page)?;
-                node_guard.clear_dirty();
+                node_guard.with_upgraded(|node| node.clear_dirty());
             }
         }
         Ok(())
