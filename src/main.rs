@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 mod error;
+mod relation;
 mod storage;
 
 fn main() {

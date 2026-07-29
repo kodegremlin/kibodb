@@ -817,7 +817,6 @@ impl BTreeNode {
 
 #[derive(Debug, Clone)]
 pub struct FileHeader {
-    pub last_row_id: u32,
     pub page_root_offset: u64,
     pub next_lsn: u64,
     pub next_free_offset: u64,
@@ -826,7 +825,6 @@ pub struct FileHeader {
 impl Default for FileHeader {
     fn default() -> Self {
         Self {
-            last_row_id: 0,
             page_root_offset: 0,
             next_lsn: 0,
             next_free_offset: PAGE_SIZE as u64,
@@ -857,7 +855,6 @@ impl DiskManager {
             file.read_exact_at(&mut buffer, 0)?;
 
             let mut cursor = ByteCursor::new(&mut buffer);
-            header.last_row_id = cursor.read_u32();
             header.page_root_offset = cursor.read_u64();
             header.next_lsn = cursor.read_u64();
             header.next_free_offset = cursor.read_u64();
@@ -888,7 +885,6 @@ impl DiskManager {
         let mut buffer = [0u8; 28];
         let mut cursor = ByteCursor::new(&mut buffer);
 
-        cursor.write_u32(self.header.last_row_id);
         cursor.write_u64(self.header.page_root_offset);
         cursor.write_u64(self.header.next_lsn);
         cursor.write_u64(self.header.next_free_offset);
@@ -1172,14 +1168,12 @@ mod tests {
         let path = temp_db_path("header_persistence");
         {
             let mut dm = DiskManager::open(&path)?;
-            dm.header.last_row_id = 42;
             dm.header.page_root_offset = 8192;
             dm.header.next_lsn = 1000;
             dm.header.next_free_offset = 16384;
             dm.save_header()?;
         }
         let dm_reopened = DiskManager::open(&path)?;
-        assert_eq!(dm_reopened.header.last_row_id, 42);
         assert_eq!(dm_reopened.header.page_root_offset, 8192);
         assert_eq!(dm_reopened.header.next_lsn, 1000);
         assert_eq!(dm_reopened.header.next_free_offset, 16384);
