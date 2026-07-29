@@ -25,4 +25,7 @@ pub enum DbError {
 
     #[error("key does not exists: key={0}")]
     KeyNotFound(u64),
+
+    #[error("column not found: column_name={0}")]
+    ColumnNotFound(String),
 }
