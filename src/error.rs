@@ -26,6 +26,9 @@ pub enum Error {
     #[error("key does not exists: key={0}")]
     KeyNotFound(u64),
 
+    #[error("ParserErr: {}", 0)]
+    ParseErr(String),
+
     #[error("column not found: column_name={0}")]
     ColumnNotFound(String),
 }

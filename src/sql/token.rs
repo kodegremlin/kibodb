@@ -18,6 +18,8 @@ pub enum Token {
     Database,
     Use,
     Show,
+    Index,
+    Unique,
 
     // Data Type
     BigIntType,
