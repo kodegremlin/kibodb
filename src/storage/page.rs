@@ -91,12 +91,18 @@ pub enum NodeType {
     Leaf = 1,
 }
 
+/// Represents a routing boundary within a B+ Tree internal node.
+/// The `child_page_id` acts as a left-pointer, routing to a child page that
+/// contains values strictly less than the `key`.
 #[derive(Debug, Default, Clone)]
 pub struct IndexEntry {
     pub key: u64,
     pub child_page_id: PageId,
 }
 
+/// A physical database tuple stored within a B+ Tree leaf node.
+/// The `row_id` uniquely identifies the record on disk, and `is_deleted` acts
+/// as a logical tombstone to defer physical byte shifting during deletions.
 #[derive(Debug, Default, Clone)]
 pub struct Record {
     pub row_id: u64,
@@ -104,6 +110,9 @@ pub struct Record {
     pub is_deleted: bool,
 }
 
+/// An in-memory representation of a B+ Tree internal page frame.
+/// Internal nodes never store user data; they act purely as a multi-level
+/// traffic directory routing tree traversals down to the correct leaf page.
 #[derive(Debug, Default, Clone)]
 pub struct InternalNode {
     pub page_id: PageId,
@@ -275,6 +284,9 @@ impl InternalNode {
     }
 }
 
+/// An in-memory representation of a B+ Tree leaf page frame.
+/// Leaf nodes store the actual user payload (`records`) and maintain horizontal
+/// doubly-linked sibling pointers for efficient sequential table scans.
 #[derive(Debug, Default, Clone)]
 pub struct LeafNode {
     pub page_id: PageId,
@@ -655,6 +667,9 @@ impl<'a> ByteCursor<'a> {
 }
 
 impl BTreeNode {
+    /// Deserializes a raw 4KB page from disk into a structured B+ Tree node.
+    /// It reads the leading byte (0 or 1) to determine the node type and
+    /// extracts the slotted array pointers to recreate the memory state.
     pub fn decode(page: &Page) -> Result<Self, DbError> {
         let mut buffer = *page.as_bytes();
         let mut cursor = ByteCursor::new(&mut buffer);
@@ -741,6 +756,9 @@ impl BTreeNode {
         }
     }
 
+    /// Serializes the in-memory B+ Tree node into a raw 4KB byte array for disk storage.
+    /// Mathematically guarantees the combined size of the fixed header, slot array,
+    /// and variable-length payload footprint never exceeds `PAGE_SIZE` (4096 bytes).
     pub fn encode(&self, page: &mut Page) -> Result<(), DbError> {
         let mut cursor = ByteCursor::new(page.as_bytes_mut());
         match self {
@@ -815,6 +833,9 @@ impl BTreeNode {
     }
 }
 
+/// Tracks the global physical state of the database file.
+/// This 24-byte block is permanently persisted at the absolute beginning
+/// (byte offset 0) of the OS file to survive database restarts.
 #[derive(Debug, Clone)]
 pub struct FileHeader {
     pub page_root_offset: u64,
@@ -832,6 +853,9 @@ impl Default for FileHeader {
     }
 }
 
+/// Manages low-level physical disk I/O, page allocation, and file state tracking.
+/// Acts as the bridge between the logical `PageId` abstraction and physical OS
+/// file boundaries.
 #[derive(Debug)]
 pub struct DiskManager {
     file: File,
@@ -839,6 +863,9 @@ pub struct DiskManager {
 }
 
 impl DiskManager {
+    /// Opens or creates the physical database file.
+    /// If the file contains existing data, it decodes the `FileHeader` from byte
+    /// offset 0 to restore the global database state (root node location and next free page).
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, DbError> {
         let file = OpenOptions::new()
             .create(true)
@@ -862,6 +889,9 @@ impl DiskManager {
         Ok(Self { file, header })
     }
 
+    /// Reads exactly one 4KB block from the physical disk into a `Page` buffer,
+    /// mapping the logical `PageId` directly to an absolute byte offset in the
+    /// file.
     pub fn read_page(&self, page_id: &PageId) -> Result<Page, DbError> {
         let mut page = Page::new();
         self.file
@@ -869,18 +899,24 @@ impl DiskManager {
         Ok(page)
     }
 
+    /// Flushes a 4KB `Page` buffer directly to disk at the specified `PageId` offset.
     pub fn write_page(&self, page_id: PageId, page: &Page) -> Result<(), DbError> {
         self.file
             .write_all_at(page.as_bytes(), page_id.0)?;
         Ok(())
     }
 
-    pub fn allocate_page(&mut self) -> PageId {
+    /// Reserves space for a new page by advancing the global `next_free_offset` tracker
+    /// by exactly 4096 bytes. The returned `PageId` represents the start of the new block.
+    pub fn compute_new_page_id(&mut self) -> PageId {
         let new_page_id = PageId(self.header.next_free_offset);
         self.header.next_free_offset += PAGE_SIZE as u64;
         new_page_id
     }
 
+    /// Synchronizes the global database state variables to byte offset 0 on disk.
+    /// Executes a hard `sync_all` (fsync) to guarantee file structure consistency
+    /// in the event of a crash.
     pub fn save_header(&self) -> Result<(), DbError> {
         let mut buffer = [0u8; 28];
         let mut cursor = ByteCursor::new(&mut buffer);
@@ -1127,8 +1163,8 @@ mod tests {
         let mut dm = DiskManager::open(&path)?;
 
         // Allocate two physical pages
-        let page_id_1 = dm.allocate_page();
-        let page_id_2 = dm.allocate_page();
+        let page_id_1 = dm.compute_new_page_id();
+        let page_id_2 = dm.compute_new_page_id();
         assert_ne!(page_id_1, page_id_2);
 
         // Encode a leaf node onto page 1

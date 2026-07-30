@@ -78,7 +78,7 @@ impl BufferPool {
         if self.page_table.len() >= self.capacity {
             self.evict_page()?;
         }
-        let page_id = self.disk_manager.allocate_page();
+        let page_id = self.disk_manager.compute_new_page_id();
 
         let node = BTreeNode::new_empty(page_id, is_leaf);
         let frame = Arc::new(RwLock::new(node));
