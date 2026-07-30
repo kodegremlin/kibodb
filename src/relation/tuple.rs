@@ -86,55 +86,55 @@ impl Tuple {
                 .read_exact(&mut is_null)
                 .map_err(Error::Io)?;
 
-            if is_null[0] == 1 {
-                values.push(Value::Null);
+            if is_null[0] == 0 {
+                let value = match col.data_type {
+                    DataType::BigInt => {
+                        let mut buffer = [0u8; 8];
+
+                        reader
+                            .read_exact(&mut buffer)
+                            .map_err(Error::Io)?;
+                        Value::BigInt(i64::from_le_bytes(buffer))
+                    }
+                    DataType::Int => {
+                        let mut buffer = [0u8; 4];
+
+                        reader
+                            .read_exact(&mut buffer)
+                            .map_err(Error::Io)?;
+                        Value::Int(i32::from_le_bytes(buffer))
+                    }
+                    DataType::Boolean => {
+                        let mut buffer = [0u8; 1];
+
+                        reader
+                            .read_exact(&mut buffer)
+                            .map_err(Error::Io)?;
+
+                        Value::Boolean(buffer[0] == 1)
+                    }
+                    DataType::Varchar => {
+                        let mut len_buf = [0u8; 4];
+                        reader
+                            .read_exact(&mut len_buf)
+                            .map_err(Error::Io)?;
+
+                        let str_len = u32::from_le_bytes(len_buf) as usize;
+                        let mut buffer = vec![0u8; str_len];
+
+                        reader
+                            .read_exact(&mut buffer)
+                            .map_err(Error::Io)?;
+
+                        let parsed_str = String::from_utf8(buffer)
+                            .map_err(|err| Error::CorruptPage(format!("invalid utf-8: {}", err)))?;
+                        Value::Varchar(parsed_str)
+                    }
+                };
+                values.push(value);
                 continue;
             }
-            let value = match col.data_type {
-                DataType::BigInt => {
-                    let mut buffer = [0u8; 8];
-
-                    reader
-                        .read_exact(&mut buffer)
-                        .map_err(Error::Io)?;
-                    Value::BigInt(i64::from_le_bytes(buffer))
-                }
-                DataType::Int => {
-                    let mut buffer = [0u8; 4];
-
-                    reader
-                        .read_exact(&mut buffer)
-                        .map_err(Error::Io)?;
-                    Value::Int(i32::from_le_bytes(buffer))
-                }
-                DataType::Boolean => {
-                    let mut buffer = [0u8; 1];
-
-                    reader
-                        .read_exact(&mut buffer)
-                        .map_err(Error::Io)?;
-
-                    Value::Boolean(buffer[0] == 1)
-                }
-                DataType::Varchar => {
-                    let mut len_buf = [0u8; 4];
-                    reader
-                        .read_exact(&mut len_buf)
-                        .map_err(Error::Io)?;
-
-                    let str_len = u32::from_le_bytes(len_buf) as usize;
-                    let mut buffer = vec![0u8; str_len];
-
-                    reader
-                        .read_exact(&mut buffer)
-                        .map_err(Error::Io)?;
-
-                    let parsed_str = String::from_utf8(buffer)
-                        .map_err(|err| Error::CorruptPage(format!("invalid utf-8: {}", err)))?;
-                    Value::Varchar(parsed_str)
-                }
-            };
-            values.push(value);
+            values.push(Value::Null);
         }
         Ok(Self { values })
     }
