@@ -2,6 +2,7 @@
 
 mod error;
 mod relation;
+mod sql;
 mod storage;
 
 fn main() {
