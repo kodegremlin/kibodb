@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    error::DbError,
+    error::Error,
     storage::{buffer_pool::WalFlusher, page::PageId},
 };
 
@@ -26,12 +26,12 @@ pub enum WalOp {
 
 impl WalOp {
     /// Converts a single raw byte into a WalOp enum type.
-    pub fn from_u8(val: u8) -> Result<Self, DbError> {
+    pub fn from_u8(val: u8) -> Result<Self, Error> {
         match val {
             0 => Ok(Self::Insert),
             1 => Ok(Self::Update),
             2 => Ok(Self::Delete),
-            _ => Err(DbError::CorruptPage(format!(
+            _ => Err(Error::CorruptPage(format!(
                 "invalid WalOp byte discriminator: {}",
                 val
             ))),
@@ -93,9 +93,9 @@ impl WalEntry {
     }
 
     /// Deserialize a raw little-endian byte slice into a `WalEntry`.
-    pub fn decode(buffer: &[u8]) -> Result<Self, DbError> {
+    pub fn decode(buffer: &[u8]) -> Result<Self, Error> {
         if buffer.len() < WAL_ENTRY_HEADER_SIZE {
-            return Err(DbError::CorruptPage(format!(
+            return Err(Error::CorruptPage(format!(
                 "Wal entry buffer too small: expected at least {} bytes, got {}",
                 WAL_ENTRY_HEADER_SIZE,
                 buffer.len()
@@ -110,7 +110,7 @@ impl WalEntry {
         // Verify net buffer size against calculated payload size.
         let expected_size = WAL_ENTRY_HEADER_SIZE + payload_len;
         if buffer.len() < expected_size {
-            return Err(DbError::CorruptPage(format!(
+            return Err(Error::CorruptPage(format!(
                 "Wal entry payload smaller than calculated size: expected {} bytes, got {}",
                 expected_size,
                 buffer.len()
@@ -149,7 +149,7 @@ pub struct WalManager {
 }
 
 impl WalFlusher for WalManager {
-    fn flush_upto(&self, lsn: u64) -> Result<(), DbError> {
+    fn flush_upto(&self, lsn: u64) -> Result<(), Error> {
         let current_flushed = self.flushed_lsn.load(Ordering::Acquire);
 
         // If the requested lsn is higher than what has already been fsynced,
@@ -165,7 +165,7 @@ impl WalFlusher for WalManager {
 impl WalManager {
     /// Opens an existing wal file in append mode or creates a new one returning
     /// `WalManager` with the fields initialized.
-    pub fn open<P: AsRef<Path>>(path: P, sync: bool) -> Result<Self, DbError> {
+    pub fn open<P: AsRef<Path>>(path: P, sync: bool) -> Result<Self, Error> {
         Ok(Self {
             file: OpenOptions::new()
                 .create(true)
@@ -190,7 +190,7 @@ impl WalManager {
 
     /// Explicitly syncs the file regardless of the `sync` flag being true or
     /// false.
-    pub fn sync(&mut self) -> Result<(), DbError> {
+    pub fn sync(&mut self) -> Result<(), Error> {
         self.file.sync_all()?;
         Ok(())
     }
@@ -199,7 +199,7 @@ impl WalManager {
     /// length indicator for each entry.
     /// Buffers the entire batch in-memory and issues a single POSIX write and if
     /// applicable, a single disk sync.
-    pub fn write_batch(&mut self, batch: &WalBatch) -> Result<(), DbError> {
+    pub fn write_batch(&mut self, batch: &WalBatch) -> Result<(), Error> {
         if batch.is_empty() {
             return Ok(());
         }
@@ -245,7 +245,7 @@ impl WalManager {
     /// Method exists solely for checkpointing purposes and must only be
     /// called after `buffer_pool.flush_all_pages()` and
     /// `disk_manager.save_header()` succeed during a database checkpoint.
-    pub fn truncate(&mut self) -> Result<(), DbError> {
+    pub fn truncate(&mut self) -> Result<(), Error> {
         self.file.set_len(0)?;
         self.file.seek(SeekFrom::Start(0))?;
         if self.sync {
@@ -260,7 +260,7 @@ impl WalManager {
     /// Terminates cleanly when encountering EOF or 0 for length-prefix.
     ///
     /// Returns an error if a torn write is detected.
-    pub fn read_batch(&mut self) -> Result<WalBatch, DbError> {
+    pub fn read_batch(&mut self) -> Result<WalBatch, Error> {
         let mut batch = WalBatch::new();
 
         // Ensure we start reading from the very beginning of the log file.
@@ -278,7 +278,7 @@ impl WalManager {
                     // Expected: we reached the end of log file.
                     break;
                 }
-                Err(err) => return Err(DbError::Io(err)),
+                Err(err) => return Err(Error::Io(err)),
                 Ok(_) => {}
             }
             let entry_len = u32::from_le_bytes(len_buf) as usize;
@@ -292,12 +292,12 @@ impl WalManager {
             // Read the exact payload bytes into buffer.
             match reader.read_exact(&mut buffer) {
                 Err(err) if err.kind() == UnexpectedEof => {
-                    return Err(DbError::CorruptPage(format!(
+                    return Err(Error::CorruptPage(format!(
                         "torn write: header reported {} bytes, buf file ended unexpectedly",
                         entry_len
                     )));
                 }
-                Err(err) => return Err(DbError::Io(err)),
+                Err(err) => return Err(Error::Io(err)),
                 Ok(_) => {}
             }
             let entry = WalEntry::decode(&buffer)?;
@@ -438,7 +438,7 @@ mod tests {
             result.is_err(),
             "reading a torn write should've triggered a corruption error"
         );
-        if let Err(DbError::CorruptPage(msg)) = result {
+        if let Err(Error::CorruptPage(msg)) = result {
             assert!(msg.contains("torn write"));
         } else {
             panic!("expected DbError::CorruptPage, got a different error");

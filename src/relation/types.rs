@@ -1,6 +1,6 @@
 use std::fmt::{self, Display};
 
-use crate::error::DbError;
+use crate::error::Error;
 
 /// Represents the logical data type of a column defined in Schema.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,13 +14,13 @@ pub enum DataType {
 
 impl DataType {
     /// Returns the DataType corresponding to the given u8 `val`.
-    pub fn from_u8(val: u8) -> Result<Self, DbError> {
+    pub fn from_u8(val: u8) -> Result<Self, Error> {
         match val {
             0 => Ok(Self::BigInt),
             1 => Ok(Self::Int),
             2 => Ok(Self::Boolean),
             3 => Ok(Self::Varchar),
-            _ => Err(DbError::CorruptPage(format!(
+            _ => Err(Error::CorruptPage(format!(
                 "invalid DataType discriminant: {}",
                 val
             ))),

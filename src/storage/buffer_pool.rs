@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Debug, sync::Arc};
 use parking_lot::RwLock;
 
 use crate::{
-    error::DbError,
+    error::Error,
     storage::{
         lru::LruReplacer,
         page::{BTreeNode, DiskManager, Page, PageId},
@@ -15,7 +15,7 @@ pub trait WalFlusher: Debug + Send + Sync {
     /// Forces the Wal manager to synchronously write and fsync all
     /// log records up-to and including the specified lsn, out to
     /// the non-volatile disk.
-    fn flush_upto(&self, lsn: u64) -> Result<(), DbError>;
+    fn flush_upto(&self, lsn: u64) -> Result<(), Error>;
 }
 
 /// A thread-safe referance to a cached page. The `Arc` provides lifecycle
@@ -50,7 +50,7 @@ impl BufferPool {
 
     /// Fetches a page from the buffer pool. If it's a cache miss, it reads
     /// from disk, potentially evicting an old page.
-    pub fn fetch_page(&mut self, page_id: PageId) -> Result<Frame, DbError> {
+    pub fn fetch_page(&mut self, page_id: PageId) -> Result<Frame, Error> {
         if let Some(frame) = self.page_table.get(&page_id) {
             self.replacer.record_access(page_id);
             return Ok(frame.clone());
@@ -74,7 +74,7 @@ impl BufferPool {
     }
 
     /// Allocates a completely new page via the `DiskManager` and adds it to the pool.
-    pub fn new_page(&mut self, is_leaf: bool) -> Result<(PageId, Frame), DbError> {
+    pub fn new_page(&mut self, is_leaf: bool) -> Result<(PageId, Frame), Error> {
         if self.page_table.len() >= self.capacity {
             self.evict_page()?;
         }
@@ -90,7 +90,7 @@ impl BufferPool {
     }
 
     /// Flushes a specific page to disk if it is dirty.
-    pub fn flush_page(&mut self, page_id: PageId) -> Result<(), DbError> {
+    pub fn flush_page(&mut self, page_id: PageId) -> Result<(), Error> {
         if let Some(frame) = self.page_table.get(&page_id) {
             let mut node_guard = frame.upgradable_read();
 
@@ -108,7 +108,7 @@ impl BufferPool {
     }
 
     /// Flushes all dirty pages to disk.
-    pub fn flush_all_pages(&mut self) -> Result<(), DbError> {
+    pub fn flush_all_pages(&mut self) -> Result<(), Error> {
         let page_ids: Vec<PageId> = self.page_table.keys().copied().collect();
         for page_id in page_ids {
             self.flush_page(page_id)?;
@@ -119,7 +119,7 @@ impl BufferPool {
 
     /// Find a page that can be evicted, flush it if dirty, and remove it from
     /// memory.
-    fn evict_page(&mut self) -> Result<(), DbError> {
+    fn evict_page(&mut self) -> Result<(), Error> {
         let evict_id = self
             .replacer
             .evict_if(|page_id| match self.page_table.get(page_id) {
@@ -131,7 +131,7 @@ impl BufferPool {
                     );
                 }
             })
-            .ok_or(DbError::LruEviction)?;
+            .ok_or(Error::LruEviction)?;
 
         self.flush_page(evict_id)?;
         self.page_table.remove(&evict_id);

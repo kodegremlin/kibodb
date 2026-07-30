@@ -1,4 +1,4 @@
-use crate::{error::DbError, relation::types::DataType};
+use crate::{error::Error, relation::types::DataType};
 
 /// Represents a single column definition within a table.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,10 +36,10 @@ impl Schema {
     /// # Note
     /// This could be a HashMap but since row widths are miniscule, contiguous
     /// memory iterations will generally outperform Map lookups.
-    pub fn get_col_idx(&self, column_name: &str) -> Result<usize, DbError> {
+    pub fn get_col_idx(&self, column_name: &str) -> Result<usize, Error> {
         self.columns
             .iter()
             .position(|col| col.name == column_name)
-            .ok_or_else(|| DbError::ColumnNotFound(column_name.to_string()))
+            .ok_or_else(|| Error::ColumnNotFound(column_name.to_string()))
     }
 }

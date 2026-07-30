@@ -1,7 +1,7 @@
 use std::{cmp, path::Path};
 
 use crate::{
-    error::DbError,
+    error::Error,
     storage::{
         buffer_pool::BufferPool,
         page::BTreeNode,
@@ -20,7 +20,7 @@ impl RecoveryEngine {
     /// Bootstraps database recovery on startup.
     /// Returns the highest observed Lsn so the storage engine can initialize
     /// its runtime counter.
-    pub fn init<P>(path: P, buf_pool: &mut BufferPool) -> Result<u64, DbError>
+    pub fn init<P>(path: P, buf_pool: &mut BufferPool) -> Result<u64, Error>
     where
         P: AsRef<Path>,
     {
@@ -44,7 +44,7 @@ impl RecoveryEngine {
 
     /// Replays a sequence of Wal entries against the Buffer Pool to reconstruct
     /// lost memory state.
-    pub fn replay(buf_pool: &mut BufferPool, batch: &WalBatch) -> Result<u64, DbError> {
+    pub fn replay(buf_pool: &mut BufferPool, batch: &WalBatch) -> Result<u64, Error> {
         let mut max_observed_lsn = 0;
 
         for entry in batch {
@@ -68,7 +68,7 @@ impl RecoveryEngine {
     }
 
     /// Applies a single physical Wal operation to an in-memory page.
-    fn apply_entry(node: &mut BTreeNode, entry: &WalEntry) -> Result<(), DbError> {
+    fn apply_entry(node: &mut BTreeNode, entry: &WalEntry) -> Result<(), Error> {
         /* NOTE: we could design the Record data structure to avoid cloning
         potentially a large payload, however that could complicate the
         design around complicated lifetimes and right now we'll keep it
@@ -76,19 +76,19 @@ impl RecoveryEngine {
         match entry.opcode {
             WalOp::Insert => match node {
                 BTreeNode::Leaf(node) => node.insert_record(entry.row_id, entry.payload.clone()),
-                BTreeNode::Internal(_) => Err(DbError::CorruptPage(
+                BTreeNode::Internal(_) => Err(Error::CorruptPage(
                     "attempted to insert a record into internal node".into(),
                 )),
             },
             WalOp::Update => match node {
                 BTreeNode::Leaf(node) => node.update_record(entry.row_id, entry.payload.clone()),
-                BTreeNode::Internal(_) => Err(DbError::CorruptPage(
+                BTreeNode::Internal(_) => Err(Error::CorruptPage(
                     "attempted to insert a record into internal node".into(),
                 )),
             },
             WalOp::Delete => match node {
                 BTreeNode::Leaf(node) => node.delete_record(entry.row_id),
-                BTreeNode::Internal(_) => Err(DbError::CorruptPage(
+                BTreeNode::Internal(_) => Err(Error::CorruptPage(
                     "attempted to insert a record into internal node".into(),
                 )),
             },

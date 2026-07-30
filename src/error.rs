@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum DbError {
+pub enum Error {
     #[error("page {0} not found in store")]
     PageNotFound(u64),
 

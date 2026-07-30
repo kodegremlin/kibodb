@@ -5,7 +5,7 @@ use std::{
     path::Path,
 };
 
-use crate::error::DbError;
+use crate::error::Error;
 
 /// Size of an element in the index/offset array (u16).
 pub const SLOT_ELEM_SIZE: usize = 2;
@@ -161,14 +161,14 @@ impl InternalNode {
 impl InternalNode {
     /// Inserts the promoted key and its page id in the index entries.
     /// Swaps the child_page pointers to maintain consistency.
-    pub fn insert_entry(&mut self, entry_key: u64, new_child_page: PageId) -> Result<(), DbError> {
+    pub fn insert_entry(&mut self, entry_key: u64, new_child_page: PageId) -> Result<(), Error> {
         let required_bytes = INDEX_ENTRY_SIZE + SLOT_ELEM_SIZE;
 
         let current_size = INTERNAL_NODE_HEADER_SIZE
             + (self.slot_array.len() * (INDEX_ENTRY_SIZE + SLOT_ELEM_SIZE));
 
         if current_size + required_bytes >= PAGE_SIZE {
-            return Err(DbError::PageFull);
+            return Err(Error::PageFull);
         }
         let insert_idx = self.slot_array.partition_point(|&entry_idx| {
             let entry = &self.entries[entry_idx as usize];
@@ -210,7 +210,7 @@ impl InternalNode {
     /// from this level.
     ///
     /// Returns the middle key that was removed from this node.
-    pub fn split(&mut self, new_sibling: &mut InternalNode) -> Result<u64, DbError> {
+    pub fn split(&mut self, new_sibling: &mut InternalNode) -> Result<u64, Error> {
         let mid = self.slot_array.len() / 2;
 
         let slot_idx = self.slot_array[mid] as usize;
@@ -264,7 +264,7 @@ impl InternalNode {
 
     /// Evaluates internal routing brackets using O(log N) binary search to determine
     /// the PageId of the child node containing `target_key`.
-    pub fn route_key(&self, target_key: u64) -> Result<PageId, DbError> {
+    pub fn route_key(&self, target_key: u64) -> Result<PageId, Error> {
         let slot_idx = self.slot_array.partition_point(|&entry_idx| {
             // Find the first index where entry.key > target_key as that is
             // the internal node-point pointing to the leaf where the
@@ -371,7 +371,7 @@ impl LeafNode {
 
     /// Splits a full leaf node in half, transferring the upper 50% of sorted records
     /// into the given new_sibling parameter.
-    pub fn split(&mut self, new_sibling: &mut LeafNode) -> Result<u64, DbError> {
+    pub fn split(&mut self, new_sibling: &mut LeafNode) -> Result<u64, Error> {
         let mid = self.slot_array.len() / 2;
 
         for &rec_idx in self.slot_array[mid..].iter() {
@@ -386,7 +386,7 @@ impl LeafNode {
         new_sibling.compact();
 
         if new_sibling.slot_array.is_empty() {
-            return Err(DbError::CorruptPage(
+            return Err(Error::CorruptPage(
                 "leaf split resulted in empty right sibling".into(),
             ));
         }
@@ -398,9 +398,9 @@ impl LeafNode {
     /// Inserts the given key-value record into the page's `records` and updates
     /// the sorted slotted leaf array to reflect the newly inserted position.
     /// Enforces both record count and 4-KiB byte limits.
-    pub fn insert_record(&mut self, row_id: u64, payload: Vec<u8>) -> Result<(), DbError> {
+    pub fn insert_record(&mut self, row_id: u64, payload: Vec<u8>) -> Result<(), Error> {
         if payload.len() > MAX_VALUE_SIZE {
-            return Err(DbError::TupleTooLarge(payload.len()));
+            return Err(Error::TupleTooLarge(payload.len()));
         }
         match self
             .slot_array
@@ -411,7 +411,7 @@ impl LeafNode {
                 let rec_idx = self.slot_array[slot_idx] as usize;
                 let rec = &mut self.records[rec_idx];
                 if !rec.is_deleted {
-                    return Err(DbError::DuplicateKey(row_id));
+                    return Err(Error::DuplicateKey(row_id));
                 }
                 // overwrite tombstone data in place.
                 rec.is_deleted = false;
@@ -435,7 +435,7 @@ impl LeafNode {
                 if (header_len + footer_len + required_bytes) > PAGE_SIZE
                     || self.slot_array.len() > MAX_LEAF_NODE_CELLS
                 {
-                    return Err(DbError::PageFull);
+                    return Err(Error::PageFull);
                 }
                 let new_rec_idx = self.records.len() as u16;
                 self.records.push(Record {
@@ -456,14 +456,14 @@ impl LeafNode {
     }
 
     /// Overwrites the raw byte payload of an existing record for the given key.
-    pub fn update_record(&mut self, row_id: u64, payload: Vec<u8>) -> Result<(), DbError> {
+    pub fn update_record(&mut self, row_id: u64, payload: Vec<u8>) -> Result<(), Error> {
         if payload.len() >= MAX_VALUE_SIZE {
-            return Err(DbError::TupleTooLarge(payload.len()));
+            return Err(Error::TupleTooLarge(payload.len()));
         }
         let update_idx = self
             .slot_array
             .binary_search_by_key(&row_id, |&rec_idx| self.records[rec_idx as usize].row_id)
-            .map_err(|_| DbError::KeyNotFound(row_id))?;
+            .map_err(|_| Error::KeyNotFound(row_id))?;
 
         let rec_idx = self.slot_array[update_idx] as usize;
         self.records[rec_idx].data = payload;
@@ -472,11 +472,11 @@ impl LeafNode {
 
     /// Marks an existing cell as logically deleted without compacting the physical
     /// bytes immediately.
-    pub fn delete_record(&mut self, row_id: u64) -> Result<(), DbError> {
+    pub fn delete_record(&mut self, row_id: u64) -> Result<(), Error> {
         let delete_idx = self
             .slot_array
             .binary_search_by_key(&row_id, |&rec_idx| self.records[rec_idx as usize].row_id)
-            .map_err(|_| DbError::KeyNotFound(row_id))?;
+            .map_err(|_| Error::KeyNotFound(row_id))?;
 
         let rec_idx = self.slot_array[delete_idx] as usize;
         self.records[rec_idx].is_deleted = true;
@@ -670,7 +670,7 @@ impl BTreeNode {
     /// Deserializes a raw 4KB page from disk into a structured B+ Tree node.
     /// It reads the leading byte (0 or 1) to determine the node type and
     /// extracts the slotted array pointers to recreate the memory state.
-    pub fn decode(page: &Page) -> Result<Self, DbError> {
+    pub fn decode(page: &Page) -> Result<Self, Error> {
         let mut buffer = *page.as_bytes();
         let mut cursor = ByteCursor::new(&mut buffer);
 
@@ -752,14 +752,14 @@ impl BTreeNode {
                     is_dirty: false,
                 }))
             }
-            val => Err(DbError::CorruptPage(format!("Unknown node type: {}", val))),
+            val => Err(Error::CorruptPage(format!("Unknown node type: {}", val))),
         }
     }
 
     /// Serializes the in-memory B+ Tree node into a raw 4KB byte array for disk storage.
     /// Mathematically guarantees the combined size of the fixed header, slot array,
     /// and variable-length payload footprint never exceeds `PAGE_SIZE` (4096 bytes).
-    pub fn encode(&self, page: &mut Page) -> Result<(), DbError> {
+    pub fn encode(&self, page: &mut Page) -> Result<(), Error> {
         let mut cursor = ByteCursor::new(page.as_bytes_mut());
         match self {
             BTreeNode::Leaf(node) => {
@@ -773,7 +773,7 @@ impl BTreeNode {
                     })
                     .sum();
                 if header_len + footer_len > PAGE_SIZE {
-                    return Err(DbError::PageFull);
+                    return Err(Error::PageFull);
                 }
                 let free_size = (PAGE_SIZE - header_len - footer_len) as u16;
 
@@ -806,7 +806,7 @@ impl BTreeNode {
                 let footer_len = node.slot_array.len() * INDEX_ENTRY_SIZE;
 
                 if header_len + footer_len > PAGE_SIZE {
-                    return Err(DbError::PageFull);
+                    return Err(Error::PageFull);
                 }
                 let free_size = (PAGE_SIZE - header_len - footer_len) as u16;
 
@@ -866,7 +866,7 @@ impl DiskManager {
     /// Opens or creates the physical database file.
     /// If the file contains existing data, it decodes the `FileHeader` from byte
     /// offset 0 to restore the global database state (root node location and next free page).
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, DbError> {
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         let file = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -892,7 +892,7 @@ impl DiskManager {
     /// Reads exactly one 4KB block from the physical disk into a `Page` buffer,
     /// mapping the logical `PageId` directly to an absolute byte offset in the
     /// file.
-    pub fn read_page(&self, page_id: &PageId) -> Result<Page, DbError> {
+    pub fn read_page(&self, page_id: &PageId) -> Result<Page, Error> {
         let mut page = Page::new();
         self.file
             .read_exact_at(page.as_bytes_mut(), page_id.0)?;
@@ -900,7 +900,7 @@ impl DiskManager {
     }
 
     /// Flushes a 4KB `Page` buffer directly to disk at the specified `PageId` offset.
-    pub fn write_page(&self, page_id: PageId, page: &Page) -> Result<(), DbError> {
+    pub fn write_page(&self, page_id: PageId, page: &Page) -> Result<(), Error> {
         self.file
             .write_all_at(page.as_bytes(), page_id.0)?;
         Ok(())
@@ -917,7 +917,7 @@ impl DiskManager {
     /// Synchronizes the global database state variables to byte offset 0 on disk.
     /// Executes a hard `sync_all` (fsync) to guarantee file structure consistency
     /// in the event of a crash.
-    pub fn save_header(&self) -> Result<(), DbError> {
+    pub fn save_header(&self) -> Result<(), Error> {
         let mut buffer = [0u8; 28];
         let mut cursor = ByteCursor::new(&mut buffer);
 
@@ -934,7 +934,7 @@ impl DiskManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::error::Error;
+    use std::error;
     use std::fs::remove_file;
     use std::time::SystemTime;
 
@@ -985,7 +985,7 @@ mod tests {
     /// Validates round-trip encoding and decoding of an empty LeafNode without
     /// siblings.
     #[test]
-    fn test_empty_leaf_node_round_trip() -> Result<(), Box<dyn Error>> {
+    fn test_empty_leaf_node_round_trip() -> Result<(), Box<dyn error::Error>> {
         let leaf = LeafNode {
             page_id: PageId(1),
             last_lsn: 100,
@@ -1025,7 +1025,7 @@ mod tests {
     /// Verifies round-trip encoding of a LeafNode containing multiple records,
     /// including deleted flags and sibling pointers.
     #[test]
-    fn test_populated_leaf_node_round_trip() -> Result<(), Box<dyn Error>> {
+    fn test_populated_leaf_node_round_trip() -> Result<(), Box<dyn error::Error>> {
         let records = vec![
             make_record(10, b"alice", false),
             make_record(20, b"bob-was-deleted", true),
@@ -1097,13 +1097,13 @@ mod tests {
         let mut page = Page::new();
 
         let result = BTreeNode::Leaf(leaf).encode(&mut page);
-        assert!(matches!(result, Err(DbError::PageFull)));
+        assert!(matches!(result, Err(Error::PageFull)));
     }
 
     /// Validates round-trip encoding and decoding of an InternalNode with routing
     /// keys and child pointers.
     #[test]
-    fn test_internal_node_round_trip() -> Result<(), Box<dyn Error>> {
+    fn test_internal_node_round_trip() -> Result<(), Box<dyn error::Error>> {
         let entries = vec![
             IndexEntry {
                 key: 100,
@@ -1152,13 +1152,13 @@ mod tests {
         page.as_bytes_mut()[0] = 99; // Invalid node type magic byte (valid is 0 or 1)
 
         let result = BTreeNode::decode(&page);
-        assert!(matches!(result, Err(DbError::CorruptPage(_))));
+        assert!(matches!(result, Err(Error::CorruptPage(_))));
     }
 
     /// Verifies end-to-end persistence: allocating, writing, and reading pages
     /// via DiskManager.
     #[test]
-    fn test_disk_manager_page_lifecycle() -> Result<(), Box<dyn Error>> {
+    fn test_disk_manager_page_lifecycle() -> Result<(), Box<dyn error::Error>> {
         let path = temp_db_path("disk_manager_lifecycle");
         let mut dm = DiskManager::open(&path)?;
 
@@ -1200,7 +1200,7 @@ mod tests {
     /// Validates that DiskManager correctly persists and restores the 28-byte
     /// FileHeader across file reopens.
     #[test]
-    fn test_disk_manager_header_persistence() -> Result<(), Box<dyn Error>> {
+    fn test_disk_manager_header_persistence() -> Result<(), Box<dyn errorError>> {
         let path = temp_db_path("header_persistence");
         {
             let mut dm = DiskManager::open(&path)?;

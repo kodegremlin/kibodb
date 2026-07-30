@@ -1,5 +1,5 @@
 use crate::{
-    error::DbError,
+    error::Error,
     storage::{
         buffer_pool::BufferPool,
         page::{BTreeNode, IndexEntry, PageId},
@@ -38,7 +38,7 @@ impl<'a> BpTree<'a> {
     /// Traverses down the rightmost children of the B+Tree to locate the largest
     /// existing row_id.
     /// Returns 0 if the table is empty as in no records exist on the leaf.
-    pub fn get_max_row_id(&mut self) -> Result<u64, DbError> {
+    pub fn get_max_row_id(&mut self) -> Result<u64, Error> {
         let mut curr_page_id = self.root_page_id;
         loop {
             let frame = self.buffer_pool.fetch_page(curr_page_id)?;
@@ -70,7 +70,7 @@ impl<'a> BpTree<'a> {
     /// Inserts a new record into the current leaf page. If physical page limit is
     /// met, then it splits the current page and the promoted keys are propogated
     /// upwards, increasing the tree height incase the root splits.
-    pub fn insert(&mut self, row_id: u64, payload: Vec<u8>, lsn: u64) -> Result<(), DbError> {
+    pub fn insert(&mut self, row_id: u64, payload: Vec<u8>, lsn: u64) -> Result<(), Error> {
         let mut parents = Vec::new();
         let mut curr_page_id = self.root_page_id;
 
@@ -123,7 +123,7 @@ impl<'a> BpTree<'a> {
         left_child_id: PageId, // old root
         right_child_id: PageId,
         lsn: u64,
-    ) -> Result<(), DbError> {
+    ) -> Result<(), Error> {
         let (root_id, root_frame) = self.buffer_pool.new_page(false)?;
         let mut root_guard = root_frame.write();
 
@@ -157,17 +157,17 @@ impl<'a> BpTree<'a> {
         promoted_key: u64,
         next_page_id: PageId,
         lsn: u64,
-    ) -> Result<Option<SplitResult>, DbError> {
+    ) -> Result<Option<SplitResult>, Error> {
         let parent_frame = self.buffer_pool.fetch_page(parent_id)?;
         let mut node_guard = parent_frame.write();
 
         let BTreeNode::Internal(ref mut parent_node) = *node_guard else {
-            return Err(DbError::CorruptPage(
+            return Err(Error::CorruptPage(
                 "expected internal node during upward key propagation".into(),
             ));
         };
         match parent_node.insert_entry(promoted_key, next_page_id) {
-            Err(DbError::PageFull) => {
+            Err(Error::PageFull) => {
                 let (new_page_id, new_frame) = self.buffer_pool.new_page(false)?;
                 let mut internal_guard = new_frame.write();
 
@@ -211,14 +211,14 @@ impl<'a> BpTree<'a> {
         row_id: u64,
         payload: Vec<u8>,
         lsn: u64,
-    ) -> Result<Option<SplitResult>, DbError> {
+    ) -> Result<Option<SplitResult>, Error> {
         let leaf_frame = self.buffer_pool.fetch_page(leaf_page_id)?;
         let mut node_guard = leaf_frame.write();
 
         let left_leaf = match &mut *node_guard {
             BTreeNode::Leaf(node) => node,
             BTreeNode::Internal(_) => {
-                return Err(DbError::CorruptPage(
+                return Err(Error::CorruptPage(
                     "attempted to insert data on a internal routing node".into(),
                 ));
             }
@@ -228,8 +228,8 @@ impl<'a> BpTree<'a> {
                 node_guard.mark_dirty(lsn);
                 return Ok(None);
             }
-            Err(DbError::DuplicateKey(key)) => return Err(DbError::DuplicateKey(key)),
-            Err(DbError::PageFull) => {
+            Err(Error::DuplicateKey(key)) => return Err(Error::DuplicateKey(key)),
+            Err(Error::PageFull) => {
                 // physical page capacity exceeded, we'll split the page below.
             }
             Err(err) => return Err(err),
@@ -288,7 +288,7 @@ impl<'a> BpTree<'a> {
     /// key a.k.a. row_id.
     ///
     /// Returns an owned copy of the payload if found and not logically deleted.
-    pub fn find_record(&mut self, row_id: u64) -> Result<Option<Vec<u8>>, DbError> {
+    pub fn find_record(&mut self, row_id: u64) -> Result<Option<Vec<u8>>, Error> {
         let mut curr_page_id = self.root_page_id;
         loop {
             let frame = self.buffer_pool.fetch_page(curr_page_id)?;
@@ -312,7 +312,7 @@ mod tests {
     };
 
     use crate::{
-        error::DbError,
+        error::Error,
         storage::{
             bptree::BpTree,
             buffer_pool::BufferPool,
@@ -350,7 +350,7 @@ mod tests {
         assert_eq!(btree.find_record(101).unwrap(), Some(vec![4, 5, 6]));
 
         let dup_result = btree.insert_leaf(root_id, 100, vec![10, 11, 13], 12);
-        assert!(matches!(dup_result, Err(DbError::DuplicateKey(100))));
+        assert!(matches!(dup_result, Err(Error::DuplicateKey(100))));
 
         let _ = fs::remove_file(db_path);
     }
