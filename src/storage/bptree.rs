@@ -35,6 +35,33 @@ impl<'a> BpTree<'a> {
         }
     }
 
+    /// Traverses down the rightmost children of the B+Tree to locate the largest
+    /// existing row_id.
+    /// Returns 0 if the table is empty as in no records exist on the leaf.
+    pub fn get_max_row_id(&mut self) -> Result<u64, DbError> {
+        let mut curr_page_id = self.root_page_id;
+        loop {
+            let frame = self.buffer_pool.fetch_page(curr_page_id)?;
+            let node_guard = frame.read();
+            match &*node_guard {
+                BTreeNode::Internal(node) => {
+                    curr_page_id = node.rightmost_child_id;
+                }
+                BTreeNode::Leaf(node) => {
+                    if node.slot_array.is_empty() {
+                        return Ok(0);
+                    }
+                    let rec_idx = *node
+                        .slot_array
+                        .last()
+                        .expect("should not be empty because of the check above it")
+                        as usize;
+                    return Ok(node.records[rec_idx].row_id);
+                }
+            }
+        }
+    }
+
     /// Returns the active root PageId.
     pub fn get_root_id(&self) -> PageId {
         self.root_page_id
