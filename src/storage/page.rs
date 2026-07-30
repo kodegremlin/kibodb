@@ -934,7 +934,7 @@ impl DiskManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::error;
+    use std::error::{self};
     use std::fs::remove_file;
     use std::time::SystemTime;
 
@@ -1200,7 +1200,7 @@ mod tests {
     /// Validates that DiskManager correctly persists and restores the 28-byte
     /// FileHeader across file reopens.
     #[test]
-    fn test_disk_manager_header_persistence() -> Result<(), Box<dyn errorError>> {
+    fn test_disk_manager_header_persistence() -> Result<(), Box<dyn error::Error>> {
         let path = temp_db_path("header_persistence");
         {
             let mut dm = DiskManager::open(&path)?;
