@@ -25,11 +25,26 @@
 ## 5 Relation Service
 
 1. Sqlite-like row_id aliasing to be used as PRIMARY_KEY and using that row_id for point lookups.
-2.
+2. Lexical analysis
+3. Ast definition and parsing
 
-## 6 Secondary Indexes
+## 6 Language semantics
+1. `Where` clause evaluation
+2. volcano iterator model
+3. block nested loop join
+4. pipelines breakers like count, avg, orderby, limit, offset
+5. insert, update, delete.
+
+## 7 Secondary Indexes and ACID guarantees
 
 1. Secondary indexes using Primary indexes only to return data, but on other fields.
-2. background compaction for complete pages saved in freelist to be re-used by the buffer pool when asked for new pages.
+3. 75/25 background flusher.
+4. Transactional rollbacks accounting for secondary indexes.
+
+## 8 Final pieces
+1. `repl` using rustyline
+2. handle sessions
+3. pages that are completely empty should be reused when asked for new pages - will need some 
+   bookeeping as well.
 
 (To be continued...)
