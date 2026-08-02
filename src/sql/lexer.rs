@@ -48,14 +48,35 @@ impl<'a> Lexer<'a> {
             "SET" => Token::Set,
             "DELETE" => Token::Delete,
             "FROM" => Token::From,
+            "AS" => Token::As,
             "WHERE" => Token::Where,
             "AND" => Token::And,
             "OR" => Token::Or,
+            "COUNT" => Token::Count,
+            "AVG" => Token::Avg,
             "CREATE" => Token::Create,
             "TABLE" => Token::Table,
             "DATABASE" => Token::Database,
+            "DATABASES" => Token::Databases,
             "INDEX" => Token::Index,
             "UNIQUE" => Token::Unique,
+            "ON" => Token::On,
+
+            "OFFSET" => Token::Offset,
+            "LIMIT" => Token::Limit,
+
+            "ORDER" => Token::Order,
+            "BY" => Token::By,
+            "GROUP" => Token::Group,
+
+            "ASC" => Token::Asc,
+            "DESC" => Token::Desc,
+
+            "INNER" => Token::Inner,
+            "LEFT" => Token::Left,
+            "RIGHT" => Token::Right,
+            "JOIN" => Token::Join,
+
             "USE" => Token::Use,
             "SHOW" => Token::Show,
             "INT" => Token::IntType,
@@ -95,7 +116,7 @@ impl<'a> Lexer<'a> {
         let mut string_lit = String::new();
 
         while let Some(&ch) = self.input.peek() {
-            if ch == '\'' {
+            if ch == '\'' || ch == '\"' {
                 self.input.next(); // consume the closing quote.
                 return Ok(Token::StringLit(string_lit));
             } else {
@@ -138,6 +159,10 @@ impl<'a> Lexer<'a> {
                 self.input.next();
                 Ok(Token::Eq)
             }
+            '.' => {
+                self.input.next();
+                Ok(Token::Dot)
+            }
             '<' => {
                 self.input.next();
                 if self.input.peek() == Some(&'=') {
@@ -167,12 +192,12 @@ impl<'a> Lexer<'a> {
                     ))
                 }
             }
-            '\'' => self.consume_string(),
+            '\'' | '\"' => self.consume_string(),
             _ if ch.is_alphabetic() || ch == '_' => self.consume_ident_or_keyword(),
             _ if ch.is_ascii_digit() => self.consume_number(),
             _ => {
                 self.input.next();
-                Err(Error::ParseErr(format!("unrecognized character: '{}'", ch)))
+                Err(Error::ParseErr(format!("unrecognized character: {}", ch)))
             }
         }
     }

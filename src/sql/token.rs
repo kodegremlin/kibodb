@@ -10,16 +10,37 @@ pub enum Token {
     Set,
     Delete,
     From,
+    As,
     Where,
     And,
     Or,
     Create,
     Table,
     Database,
+    Databases,
     Use,
     Show,
     Index,
     Unique,
+    On,
+
+    Count,
+    Avg,
+
+    Offset,
+    Limit,
+
+    Order,
+    By,
+    Group,
+
+    Asc,
+    Desc,
+
+    Inner,
+    Left,
+    Right,
+    Join,
 
     // Data Type
     BigIntType,
@@ -36,6 +57,7 @@ pub enum Token {
     // Symbols & Operators
     Asterisk,
     Comma,
+    Dot,
     LParen,
     RParen,
     Eq,
