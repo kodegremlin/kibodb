@@ -1,5 +1,8 @@
 use std::mem;
 
+/* TODO: Find out a better way to write tests instead of writing entire tree structure
+for every statement being tested, like a harness or constructor or something. */
+
 use crate::{
     error::Error,
     relation::types::DataType,

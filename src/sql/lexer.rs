@@ -1,5 +1,8 @@
 use std::{iter::Peekable, str::Chars};
 
+/* TODO: Support expressions like 1 + 1 and alike in most statements, both the lexer
+and parser will need to be extended. */
+
 use crate::{error::Error, sql::token::Token};
 
 /// Transforms a raw SQL string into a stream of structured `Tokens`.
