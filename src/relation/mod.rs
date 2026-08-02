@@ -1,4 +1,4 @@
-mod catalog;
-mod schema;
-mod tuple;
-mod types;
+pub(crate) mod catalog;
+pub(crate) mod schema;
+pub(crate) mod tuple;
+pub(crate) mod types;
