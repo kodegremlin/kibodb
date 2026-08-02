@@ -1,5 +1,3 @@
-use parking_lot::{ArcRwLockReadGuard, RawRwLock};
-
 use crate::{
     error::Error,
     storage::{
@@ -27,8 +25,6 @@ pub struct SplitResult {
     /// The physical `PageId` of the newly allocated right sibling leaf.
     pub new_page_id: PageId,
 }
-
-type FrameReadGuard = ArcRwLockReadGuard<RawRwLock, BTreeNode>;
 
 impl<'a> BpTree<'a> {
     /// Constructs a initialized B+Tree with the given `BufferPool` and `PageId`.
