@@ -1,3 +1,5 @@
+use parking_lot::{ArcRwLockReadGuard, RawRwLock};
+
 use crate::{
     error::Error,
     storage::{
@@ -25,6 +27,8 @@ pub struct SplitResult {
     /// The physical `PageId` of the newly allocated right sibling leaf.
     pub new_page_id: PageId,
 }
+
+type FrameReadGuard = ArcRwLockReadGuard<RawRwLock, BTreeNode>;
 
 impl<'a> BpTree<'a> {
     /// Constructs a initialized B+Tree with the given `BufferPool` and `PageId`.
@@ -74,19 +78,23 @@ impl<'a> BpTree<'a> {
         let mut parents = Vec::new();
         let mut curr_page_id = self.root_page_id;
 
+        let curr_frame = self.buffer_pool.fetch_page(curr_page_id)?;
+        let mut curr_guard = curr_frame.read_arc();
+
         // Traverses down to the leaf, storing the parent stack.
-        loop {
-            let frame = self.buffer_pool.fetch_page(curr_page_id)?;
-            let node_guard = frame.write();
-            match &*node_guard {
-                BTreeNode::Internal(node) => {
-                    let next_page_id = node.route_key(row_id)?;
-                    parents.push(curr_page_id);
-                    curr_page_id = next_page_id;
-                }
-                _ => break, // reached the leaf.
-            }
+        while let BTreeNode::Internal(node) = &*curr_guard {
+            let next_page_id = {
+                parents.push(curr_page_id);
+                node.route_key(row_id)?
+            };
+            let child_frame = self.buffer_pool.fetch_page(next_page_id)?;
+            let child_guard = child_frame.read_arc();
+
+            curr_guard = child_guard;
+            curr_page_id = next_page_id;
         }
+        drop(curr_guard);
+
         let mut split_res = self.insert_leaf(curr_page_id, row_id, payload, lsn)?;
 
         // Propogate splits upward using the path stack.
