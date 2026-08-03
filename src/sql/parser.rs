@@ -959,4 +959,136 @@ mod tests {
         assert_eq!(st_got, st_want);
         Ok(())
     }
+
+    #[test]
+    fn test_multiple_join_statement() -> Result<(), Box<dyn error::Error>> {
+        let query = r#"
+                    Select Count(us1.name) as name_count, us1.age age, Avg(us2.balance) as avg_balance,
+                    Avg(us3.workdays) as avg_workdays
+                    From user1 As us1 Inner Join user2 As us2 On us1.id = us2.id Right Join
+                    users3 As us3 On us1.age = us3.age
+                    Where us3.workdays > 10 And us3.workdays <= 100
+                    Group By us1.age
+                    Order By avg_balance Desc"#;
+        let lexer = Lexer::new(&query);
+
+        let mut parser = Parser::new(lexer)?;
+        let st_got = parser.parse_statement()?;
+
+        let st_want = Statement::Select(Select {
+            // 1. The Projection (Select List)
+            select_list: vec![
+                DerivedColumn {
+                    expr: Expr::Count(Some(ColumnReference {
+                        qualifier: Some("us1".into()),
+                        column_name: "name".into(),
+                    })),
+                    alias: Some("name_count".into()), // Parsed from `AS name_count`
+                },
+                DerivedColumn {
+                    expr: Expr::Column(ColumnReference {
+                        qualifier: Some("us1".into()),
+                        column_name: "age".into(),
+                    }),
+                    alias: Some("age".into()), // Parsed from implicit `age`
+                },
+                DerivedColumn {
+                    expr: Expr::Average(ColumnReference {
+                        qualifier: Some("us2".into()),
+                        column_name: "balance".into(),
+                    }),
+                    alias: Some("avg_balance".into()),
+                },
+                DerivedColumn {
+                    expr: Expr::Average(ColumnReference {
+                        qualifier: Some("us3".into()),
+                        column_name: "workdays".into(),
+                    }),
+                    alias: Some("avg_workdays".into()),
+                },
+            ],
+
+            // 2. The Table Expression (Left-Deep Join Tree)
+            from: Some(TableReference::Join(Box::new(QualifiedJoin {
+                // LHS is itself a Join (user1 INNER JOIN user2)
+                left: TableReference::Join(Box::new(QualifiedJoin {
+                    left: TableReference::BaseTable {
+                        name: "user1".into(),
+                        alias: Some("us1".into()),
+                    },
+                    join_type: JoinType::Inner,
+                    right: TableReference::BaseTable {
+                        name: "user2".into(),
+                        alias: Some("us2".into()),
+                    },
+                    condition: Expr::BinaryOp {
+                        left: Box::new(Expr::Column(ColumnReference {
+                            qualifier: Some("us1".into()),
+                            column_name: "id".into(),
+                        })),
+                        op: BinaryOperator::Eq,
+                        right: Box::new(Expr::Column(ColumnReference {
+                            qualifier: Some("us2".into()),
+                            column_name: "id".into(),
+                        })),
+                    },
+                })),
+                // RHS of the top-level tree is the Right Join to users3
+                join_type: JoinType::Right,
+                right: TableReference::BaseTable {
+                    name: "users3".into(),
+                    alias: Some("us3".into()),
+                },
+                condition: Expr::BinaryOp {
+                    left: Box::new(Expr::Column(ColumnReference {
+                        qualifier: Some("us1".into()),
+                        column_name: "age".into(),
+                    })),
+                    op: BinaryOperator::Eq,
+                    right: Box::new(Expr::Column(ColumnReference {
+                        qualifier: Some("us3".into()),
+                        column_name: "age".into(),
+                    })),
+                },
+            }))),
+
+            // 3. The Filter (Where Clause)
+            where_clause: Some(Expr::BinaryOp {
+                left: Box::new(Expr::BinaryOp {
+                    left: Box::new(Expr::Column(ColumnReference {
+                        qualifier: Some("us3".into()),
+                        column_name: "workdays".into(),
+                    })),
+                    op: BinaryOperator::Gt,
+                    right: Box::new(Expr::Literal(AstLiteral::Int(10))),
+                }),
+                op: BinaryOperator::And, // The AND operator is the root of the WHERE expression
+                right: Box::new(Expr::BinaryOp {
+                    left: Box::new(Expr::Column(ColumnReference {
+                        qualifier: Some("us3".into()),
+                        column_name: "workdays".into(),
+                    })),
+                    op: BinaryOperator::Lte,
+                    right: Box::new(Expr::Literal(AstLiteral::Int(100))),
+                }),
+            }),
+
+            // 4. Aggregation & Sorting
+            group_by: vec![ColumnReference {
+                qualifier: Some("us1".into()),
+                column_name: "age".into(),
+            }],
+            order_by: vec![SortSpecification {
+                column: ColumnReference {
+                    qualifier: None, // `avg_balance` is an alias from the select list, not a table column
+                    column_name: "avg_balance".into(),
+                },
+                descending: true, // Parsed from `Desc`
+            }],
+            limit: None,
+            offset: None,
+        });
+        assert_eq!(st_got, st_want);
+        Ok(())
+    }
 }
