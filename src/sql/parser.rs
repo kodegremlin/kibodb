@@ -898,7 +898,6 @@ mod tests {
                     alias: Some("address".into()),
                 },
             ],
-            // The FROM clause resolves to a single Left-Deep Join Tree
             from: Some(TableReference::Join(Box::new(QualifiedJoin {
                 left: TableReference::BaseTable {
                     name: "user1".into(),
@@ -909,7 +908,6 @@ mod tests {
                     alias: Some("us2".into()),
                 },
                 join_type: JoinType::Inner,
-                // The ON condition that dictates how the join is evaluated
                 condition: Expr::BinaryOp {
                     left: Box::new(Expr::Column(ColumnReference {
                         qualifier: Some("us1".into()),
@@ -922,7 +920,6 @@ mod tests {
                     })),
                 },
             }))),
-            // The WHERE clause properly respects precedence. AND is the root.
             where_clause: Some(Expr::BinaryOp {
                 left: Box::new(Expr::BinaryOp {
                     left: Box::new(Expr::Column(ColumnReference {
@@ -976,21 +973,20 @@ mod tests {
         let st_got = parser.parse_statement()?;
 
         let st_want = Statement::Select(Select {
-            // 1. The Projection (Select List)
             select_list: vec![
                 DerivedColumn {
                     expr: Expr::Count(Some(ColumnReference {
                         qualifier: Some("us1".into()),
                         column_name: "name".into(),
                     })),
-                    alias: Some("name_count".into()), // Parsed from `AS name_count`
+                    alias: Some("name_count".into()),
                 },
                 DerivedColumn {
                     expr: Expr::Column(ColumnReference {
                         qualifier: Some("us1".into()),
                         column_name: "age".into(),
                     }),
-                    alias: Some("age".into()), // Parsed from implicit `age`
+                    alias: Some("age".into()),
                 },
                 DerivedColumn {
                     expr: Expr::Average(ColumnReference {
@@ -1008,9 +1004,7 @@ mod tests {
                 },
             ],
 
-            // 2. The Table Expression (Left-Deep Join Tree)
             from: Some(TableReference::Join(Box::new(QualifiedJoin {
-                // LHS is itself a Join (user1 INNER JOIN user2)
                 left: TableReference::Join(Box::new(QualifiedJoin {
                     left: TableReference::BaseTable {
                         name: "user1".into(),
@@ -1033,7 +1027,6 @@ mod tests {
                         })),
                     },
                 })),
-                // RHS of the top-level tree is the Right Join to users3
                 join_type: JoinType::Right,
                 right: TableReference::BaseTable {
                     name: "users3".into(),
@@ -1051,8 +1044,6 @@ mod tests {
                     })),
                 },
             }))),
-
-            // 3. The Filter (Where Clause)
             where_clause: Some(Expr::BinaryOp {
                 left: Box::new(Expr::BinaryOp {
                     left: Box::new(Expr::Column(ColumnReference {
@@ -1062,7 +1053,7 @@ mod tests {
                     op: BinaryOperator::Gt,
                     right: Box::new(Expr::Literal(AstLiteral::Int(10))),
                 }),
-                op: BinaryOperator::And, // The AND operator is the root of the WHERE expression
+                op: BinaryOperator::And,
                 right: Box::new(Expr::BinaryOp {
                     left: Box::new(Expr::Column(ColumnReference {
                         qualifier: Some("us3".into()),
@@ -1072,18 +1063,16 @@ mod tests {
                     right: Box::new(Expr::Literal(AstLiteral::Int(100))),
                 }),
             }),
-
-            // 4. Aggregation & Sorting
             group_by: vec![ColumnReference {
                 qualifier: Some("us1".into()),
                 column_name: "age".into(),
             }],
             order_by: vec![SortSpecification {
                 column: ColumnReference {
-                    qualifier: None, // `avg_balance` is an alias from the select list, not a table column
+                    qualifier: None,
                     column_name: "avg_balance".into(),
                 },
-                descending: true, // Parsed from `Desc`
+                descending: true,
             }],
             limit: None,
             offset: None,
