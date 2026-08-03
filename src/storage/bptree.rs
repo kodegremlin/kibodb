@@ -38,7 +38,7 @@ impl<'a> BpTree<'a> {
     /// Traverses down the rightmost children of the B+Tree to locate the largest
     /// existing row_id.
     /// Returns 0 if the table is empty as in no records exist on the leaf.
-    pub fn get_max_row_id(&mut self) -> Result<u64, Error> {
+    pub fn get_max_row_id(&self) -> Result<u64, Error> {
         let mut curr_page_id = self.root_page_id;
         loop {
             let frame = self.buffer_pool.fetch_page(curr_page_id)?;

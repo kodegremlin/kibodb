@@ -1,8 +1,9 @@
 use std::{
-    cmp::Ordering,
+    cmp,
     fs::{File, OpenOptions},
     os::unix::fs::FileExt,
     path::Path,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use crate::error::Error;
@@ -21,6 +22,12 @@ pub struct PageId(pub u64);
 impl From<PageId> for u64 {
     fn from(value: PageId) -> Self {
         value.0
+    }
+}
+
+impl From<u64> for PageId {
+    fn from(value: u64) -> Self {
+        PageId(value)
     }
 }
 
@@ -359,13 +366,13 @@ impl LeafNode {
 
         let net_size = LEAF_NODE_HEADER_SIZE + bytes_used;
         match net_size.cmp(&PAGE_SIZE) {
-            Ordering::Less => {
+            cmp::Ordering::Less => {
                 self.free_size = (PAGE_SIZE - net_size) as u16;
             }
-            Ordering::Equal => {
+            cmp::Ordering::Equal => {
                 self.free_size = 0;
             }
-            Ordering::Greater => unreachable!(),
+            cmp::Ordering::Greater => unreachable!(),
         }
     }
 
@@ -836,11 +843,11 @@ impl BTreeNode {
 /// Tracks the global physical state of the database file.
 /// This 24-byte block is permanently persisted at the absolute beginning
 /// (byte offset 0) of the OS file to survive database restarts.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FileHeader {
     pub page_root_offset: u64,
     pub next_lsn: u64,
-    pub next_free_offset: u64,
+    pub next_free_offset: AtomicU64,
 }
 
 impl Default for FileHeader {
@@ -848,7 +855,7 @@ impl Default for FileHeader {
         Self {
             page_root_offset: 0,
             next_lsn: 0,
-            next_free_offset: PAGE_SIZE as u64,
+            next_free_offset: AtomicU64::new(PAGE_SIZE as u64),
         }
     }
 }
@@ -859,7 +866,7 @@ impl Default for FileHeader {
 #[derive(Debug)]
 pub struct DiskManager {
     file: File,
-    pub header: FileHeader,
+    header: FileHeader,
 }
 
 impl DiskManager {
@@ -877,14 +884,14 @@ impl DiskManager {
         let mut header = FileHeader::default();
         let metadata = file.metadata()?;
 
-        if metadata.len().cmp(&0) == Ordering::Greater {
+        if metadata.len().cmp(&0) == cmp::Ordering::Greater {
             let mut buffer = [0u8; 28]; // 4 + 8 + 8 + 8 = 28
             file.read_exact_at(&mut buffer, 0)?;
 
             let mut cursor = ByteCursor::new(&mut buffer);
             header.page_root_offset = cursor.read_u64();
             header.next_lsn = cursor.read_u64();
-            header.next_free_offset = cursor.read_u64();
+            header.next_free_offset = AtomicU64::new(cursor.read_u64());
         }
         Ok(Self { file, header })
     }
@@ -908,10 +915,12 @@ impl DiskManager {
 
     /// Reserves space for a new page by advancing the global `next_free_offset` tracker
     /// by exactly 4096 bytes. The returned `PageId` represents the start of the new block.
-    pub fn compute_new_page_id(&mut self) -> PageId {
-        let new_page_id = PageId(self.header.next_free_offset);
-        self.header.next_free_offset += PAGE_SIZE as u64;
-        new_page_id
+    pub fn compute_new_page_id(&self) -> PageId {
+        let new_page_id = self
+            .header
+            .next_free_offset
+            .fetch_add(PAGE_SIZE as u64, Ordering::Relaxed);
+        PageId(new_page_id)
     }
 
     /// Synchronizes the global database state variables to byte offset 0 on disk.
@@ -923,7 +932,11 @@ impl DiskManager {
 
         cursor.write_u64(self.header.page_root_offset);
         cursor.write_u64(self.header.next_lsn);
-        cursor.write_u64(self.header.next_free_offset);
+        cursor.write_u64(
+            self.header
+                .next_free_offset
+                .load(Ordering::Relaxed),
+        );
 
         self.file.write_all_at(&buffer, 0)?;
         self.file.sync_all()?;
@@ -1160,7 +1173,7 @@ mod tests {
     #[test]
     fn test_disk_manager_page_lifecycle() -> Result<(), Box<dyn error::Error>> {
         let path = temp_db_path("disk_manager_lifecycle");
-        let mut dm = DiskManager::open(&path)?;
+        let dm = DiskManager::open(&path)?;
 
         // Allocate two physical pages
         let page_id_1 = dm.compute_new_page_id();
@@ -1206,14 +1219,21 @@ mod tests {
             let mut dm = DiskManager::open(&path)?;
             dm.header.page_root_offset = 8192;
             dm.header.next_lsn = 1000;
-            dm.header.next_free_offset = 16384;
+            dm.header
+                .next_free_offset
+                .store(16384, Ordering::Release);
             dm.save_header()?;
         }
         let dm_reopened = DiskManager::open(&path)?;
         assert_eq!(dm_reopened.header.page_root_offset, 8192);
         assert_eq!(dm_reopened.header.next_lsn, 1000);
-        assert_eq!(dm_reopened.header.next_free_offset, 16384);
-
+        assert_eq!(
+            dm_reopened
+                .header
+                .next_free_offset
+                .load(Ordering::Acquire),
+            16384
+        );
         remove_file(path)?;
         Ok(())
     }
