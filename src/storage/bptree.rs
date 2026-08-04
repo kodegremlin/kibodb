@@ -74,23 +74,17 @@ impl<'a> BpTree<'a> {
         let mut parents = Vec::new();
         let mut curr_page_id = self.root_page_id;
 
-        let curr_frame = self.buffer_pool.fetch_page(curr_page_id)?;
-        let mut curr_guard = curr_frame.read_arc();
-
-        // Traverses down to the leaf, storing the parent stack.
-        while let BTreeNode::Internal(node) = &*curr_guard {
-            let next_page_id = {
-                parents.push(curr_page_id);
-                node.route_key(row_id)?
-            };
-            let child_frame = self.buffer_pool.fetch_page(next_page_id)?;
-            let child_guard = child_frame.read_arc();
-
-            curr_guard = child_guard;
-            curr_page_id = next_page_id;
+        loop {
+            let frame = self.buffer_pool.fetch_page(curr_page_id)?;
+            match &*frame.read_arc() {
+                BTreeNode::Internal(node) => {
+                    parents.push(curr_page_id);
+                    let next_page_id = node.route_key(row_id)?;
+                    curr_page_id = next_page_id;
+                }
+                _ => break,
+            }
         }
-        drop(curr_guard);
-
         let mut split_res = self.insert_leaf(curr_page_id, row_id, payload, lsn)?;
 
         // Propogate splits upward using the path stack.
