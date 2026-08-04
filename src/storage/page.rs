@@ -11,9 +11,10 @@ use crate::error::Error;
 /// Size of an element in the index/offset array (u16).
 pub const SLOT_ELEM_SIZE: usize = 2;
 
-/// Size of any page in smol-db.
-/// (we don't have true slotted page architecture)
-pub const PAGE_SIZE: usize = 4096;
+/// Size of any page in smol-db, around 8KiB. We don't have true slotted page architecture,
+/// where larger pages are written to another page which the slotted/normal leaf node just
+/// holds a pointer to (I'll try that later).
+pub const PAGE_SIZE: usize = 8192;
 
 /// Identifier for a physical file offset.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -65,9 +66,9 @@ pub const INDEX_ENTRY_SIZE: usize = 8 + 8;
 /// The actual bytes are appended after this.
 pub const RECORD_META_SIZE: usize = 8 + 1 + 4;
 
-/// Maximum allowed size of a value. Larger values than 400 will be rejected;
+/// Maximum allowed size of a value. Larger values than 1KiB will be rejected;
 /// what is this? a real database (¬_¬)?
-pub const MAX_VALUE_SIZE: usize = 400;
+pub const MAX_VALUE_SIZE: usize = 1024;
 
 /// Fixed size of the internal node header.
 pub const INTERNAL_NODE_HEADER_SIZE: usize = 1 + // entry_type (u8)

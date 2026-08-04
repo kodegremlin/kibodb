@@ -359,7 +359,7 @@ mod tests {
         let (root_id, _) = pool.new_page(true).unwrap();
         let mut btree = BpTree::new(&mut pool, root_id);
 
-        let large_payload = vec![0u8; 400];
+        let large_payload = vec![0u8; 1024];
         let mut split_res = None;
 
         for key in 1..=15 {
@@ -373,7 +373,7 @@ mod tests {
         }
         let split = split_res.expect("leaf failed to split exceeding 4KB capacity!");
         assert!(
-            split.promoted_key >= 5,
+            split.promoted_key >= 4,
             "row_id smaller than expected {}",
             split.promoted_key
         );
