@@ -34,4 +34,7 @@ pub enum Error {
 
     #[error("column not found: column_name={0}")]
     ColumnNotFound(String),
+
+    #[error("requested table was not found: table_name={0}")]
+    TableNotFound(String),
 }
