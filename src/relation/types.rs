@@ -85,3 +85,32 @@ impl Display for Value {
         }
     }
 }
+
+impl Value {
+    /// Returns the string from the varchar type.
+    pub fn varchar_to_str(&self) -> Option<&str> {
+        if let Value::Varchar(val) = self {
+            Some(val)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the value from the bigint type.
+    pub fn bigint_to_i64(&self) -> Option<i64> {
+        if let Value::BigInt(val) = self {
+            Some(*val)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the value from the int type.
+    pub fn int_to_i32(&self) -> Option<i32> {
+        if let Value::Int(val) = self {
+            Some(*val)
+        } else {
+            None
+        }
+    }
+}

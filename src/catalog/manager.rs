@@ -6,7 +6,7 @@ use crate::{
         catalog::{sys_pages_schema, sys_schema_schema},
         schema::{Column, Schema},
         tuple::Tuple,
-        types::{DataType, Value},
+        types::DataType,
     },
     storage::{
         buffer_pool::BufferPool,
@@ -51,18 +51,16 @@ impl CatalogManager {
 
         // Load `sys_pages` as {table_name -> root_page_id} in the catalog map
         Self::scan_system_table(pool, SYS_PAGES_ROOT_ID, &sys_pages_schema, |tuple| {
-            let Value::Varchar(table_name) = &tuple.values[0] else {
-                return Err(Error::CorruptPage(
-                    "sys_pages table_name is not Varchar".into(),
-                ));
-            };
-            let Value::BigInt(root_page_id) = tuple.values[1] else {
-                return Err(Error::CorruptPage(
-                    "sys_pages root_page_id is not BigInt".into(),
-                ));
-            };
+            let table_name = tuple.values[0]
+                .varchar_to_str()
+                .ok_or_else(|| Error::CorruptPage("sys_pages table_name is not Varchar".into()))?;
+
+            let root_page_id = tuple.values[1]
+                .bigint_to_i64()
+                .ok_or_else(|| Error::CorruptPage("sys_pages root_page_id is not BigInt".into()))?;
+
             self.table_roots
-                .insert(table_name.clone(), PageId(root_page_id as u64));
+                .insert(table_name.to_string(), PageId(root_page_id as u64));
             Ok(())
         })?;
         let mut raw_columns = HashMap::new();
@@ -70,44 +68,37 @@ impl CatalogManager {
 
         // Load `sys_schema` as {table_name -> vec[columns]} in temp raw_columns
         Self::scan_system_table(pool, SYS_SCHEMA_ROOT_ID, &sys_schema_schema, |tuple| {
-            let Value::Varchar(table_name) = &tuple.values[0] else {
-                return Err(Error::CorruptPage(
-                    "sys_schema table_name is not Varchar".into(),
-                ));
-            };
-            let Value::Varchar(field_name) = &tuple.values[1] else {
-                return Err(Error::CorruptPage(
-                    "sys_schema field_name is not Varchar".into(),
-                ));
-            };
-            let Value::Int(field_type) = tuple.values[2] else {
-                return Err(Error::CorruptPage(
-                    "sys_schema field_type is not Int".into(),
-                ));
-            };
-            let Value::Int(field_length) = tuple.values[3] else {
-                return Err(Error::CorruptPage(
-                    "sys_schema field_length is not Int".into(),
-                ));
-            };
+            let table_name = tuple.values[0]
+                .varchar_to_str()
+                .ok_or_else(|| Error::CorruptPage("sys_schema table_name is not Varchar".into()))?;
+
+            let field_name = tuple.values[1]
+                .varchar_to_str()
+                .ok_or_else(|| Error::CorruptPage("sys_schema field_name is not Varchar".into()))?;
+
+            let field_type = tuple.values[2]
+                .int_to_i32()
+                .ok_or_else(|| Error::CorruptPage("sys_schema field_type is not Int".into()))?;
+
+            let field_length = tuple.values[3]
+                .int_to_i32()
+                .ok_or_else(|| Error::CorruptPage("sys_schema field_length is not Int".into()))?;
+
             let data_type = DataType::from_u8(field_type as u8)?;
-            let length = if field_length > 0 {
-                Some(field_length as u32)
-            } else {
-                None
-            };
+            let length = (field_length > 0).then_some(field_length as u32);
+
             let column = Column::new(field_name, data_type, length);
             raw_columns
-                .entry(table_name.clone())
+                .entry(table_name.to_string())
                 .or_insert_with(Vec::new)
                 .push(column);
             Ok(())
         })?;
-        // Build the actual catalog schema {table_name -> schema}
-        for (table_name, columns) in raw_columns {
-            self.table_schema
-                .insert(table_name, Schema::new(columns));
-        }
+        self.table_schema.extend(
+            raw_columns
+                .into_iter()
+                .map(|(name, col)| (name, Schema::new(col))),
+        );
         Ok(())
     }
 
