@@ -62,6 +62,28 @@ impl<'a> BpTree<'a> {
         }
     }
 
+    /// Traverses down the leftmost child pointers to locate the first leaf page.
+    /// Useful to initializing full table scans in the execution engine.
+    pub fn get_leftmost_leaf(pool: &BufferPool, root_page_id: PageId) -> Result<PageId, Error> {
+        let mut curr_page_id = root_page_id;
+        loop {
+            let frame = pool.fetch_page(curr_page_id)?;
+            let node_guard = frame.read();
+
+            match &*node_guard {
+                BTreeNode::Internal(node) => {
+                    if !node.slot_array.is_empty() {
+                        let entry_idx = node.slot_array[0] as usize;
+                        curr_page_id = node.entries[entry_idx].child_page_id;
+                    } else {
+                        curr_page_id = node.rightmost_child_id;
+                    }
+                }
+                _ => return Ok(curr_page_id),
+            }
+        }
+    }
+
     /// Returns the active root PageId.
     pub fn get_root_id(&self) -> PageId {
         self.root_page_id
