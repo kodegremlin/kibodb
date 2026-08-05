@@ -20,6 +20,6 @@ pub fn sys_schema_schema() -> Schema {
         Column::new("table_name", DataType::Varchar, Some(255)),
         Column::new("field_name", DataType::Varchar, Some(255)),
         Column::new("field_type", DataType::Int, None),
-        Column::new("field_length", DataType::Int, Some(255)),
+        Column::new("field_length", DataType::Int, None),
     ])
 }
