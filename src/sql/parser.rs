@@ -445,7 +445,7 @@ impl<'a> Parser<'a> {
 
     /// Parses a set of limited expressions.
     ///
-    /// TODO: document later
+    /// TODO: document later, the precedence thing, as in why call parse_or?
     fn parse_expressions(&mut self) -> Result<Expr, Error> {
         self.parse_or_condition()
     }

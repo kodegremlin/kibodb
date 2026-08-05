@@ -203,3 +203,5 @@ impl CatalogManager {
         Ok(())
     }
 }
+
+// TODO: write tests unless it already works correctly :)

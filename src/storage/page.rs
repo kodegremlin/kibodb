@@ -221,12 +221,11 @@ impl InternalNode {
     pub fn split(&mut self, new_sibling: &mut InternalNode) -> Result<u64, Error> {
         let mid = self.slot_array.len() / 2;
 
-        let slot_idx = self.slot_array[mid] as usize;
-        let promoted_entry = self.entries[slot_idx].clone();
+        let entry_idx = self.slot_array[mid] as usize;
+        let promoted_entry = self.entries[entry_idx].clone();
 
-        for &slot_idx in &self.slot_array[mid + 1..] {
-            let entry_idx = self.slot_array[slot_idx as usize] as usize;
-            let entry = self.entries[entry_idx].clone();
+        for &entry_idx in &self.slot_array[mid + 1..] {
+            let entry = self.entries[entry_idx as usize].clone();
 
             let new_idx = new_sibling.entries.len();
             new_sibling.entries.push(entry);
