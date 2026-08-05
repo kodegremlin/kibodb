@@ -252,24 +252,24 @@ impl<'a> BpTree<'a> {
 
         // wire the new right sibling node between the left_leaf and old right.
         right_leaf.has_prev = true;
-        right_leaf.prev_page_id = leaf_page_id.into();
+        right_leaf.prev_page_id = leaf_page_id;
 
         right_leaf.has_next = old_has_next;
         right_leaf.next_page_id = old_next_id;
 
         // wire the left_leaf to point towards the right_leaf.
         left_leaf.has_next = true;
-        left_leaf.next_page_id = new_leaf_id.into();
+        left_leaf.next_page_id = new_leaf_id;
 
         // If an old right sibling existed, fetch it and connects its backward
         // pointer.
         if old_has_next {
-            let old_right_frame = self.buffer_pool.fetch_page(PageId(old_next_id))?;
+            let old_right_frame = self.buffer_pool.fetch_page(old_next_id)?;
             let mut old_right_guard = old_right_frame.write();
 
             if let BTreeNode::Leaf(ref mut old_right_leaf) = *old_right_guard {
                 old_right_leaf.has_prev = true;
-                old_right_leaf.prev_page_id = new_leaf_id.into();
+                old_right_leaf.prev_page_id = new_leaf_id;
                 old_right_guard.mark_dirty(lsn);
             }
         }
@@ -391,11 +391,11 @@ mod tests {
             (BTreeNode::Leaf(left), BTreeNode::Leaf(right)) => {
                 // verify left_page pointer to next node
                 assert!(left.has_next);
-                assert_eq!(left.next_page_id, split.new_page_id.into());
+                assert_eq!(left.next_page_id, split.new_page_id);
 
                 // verify right_page pointer to prev node
                 assert!(right.has_prev);
-                assert_eq!(right.prev_page_id, root_id.into());
+                assert_eq!(right.prev_page_id, root_id);
 
                 assert_eq!(
                     right.records[right.slot_array[0] as usize].row_id,

@@ -301,8 +301,8 @@ pub struct LeafNode {
     pub last_lsn: u64,
     pub has_prev: bool,
     pub has_next: bool,
-    pub prev_page_id: u64,
-    pub next_page_id: u64,
+    pub prev_page_id: PageId,
+    pub next_page_id: PageId,
     pub slot_array: Vec<u16>,
     pub records: Vec<Record>,
     pub free_size: u16,
@@ -718,8 +718,8 @@ impl BTreeNode {
                     last_lsn,
                     has_prev: has_lsib,
                     has_next: has_rsib,
-                    prev_page_id: lsib_index,
-                    next_page_id: rsib_index,
+                    prev_page_id: lsib_index.into(),
+                    next_page_id: rsib_index.into(),
                     slot_array: indices,
                     records: cells,
                     free_size,
@@ -790,8 +790,8 @@ impl BTreeNode {
                 cursor.write_u64(node.last_lsn);
                 cursor.write_u8(node.has_prev as u8);
                 cursor.write_u8(node.has_next as u8);
-                cursor.write_u64(node.prev_page_id);
-                cursor.write_u64(node.next_page_id);
+                cursor.write_u64(node.prev_page_id.into());
+                cursor.write_u64(node.next_page_id.into());
 
                 cursor.write_u32(node.slot_array.len() as u32);
                 for &index in &node.slot_array {
@@ -895,6 +895,16 @@ impl DiskManager {
             header.next_free_offset = AtomicU64::new(cursor.read_u64());
         }
         Ok(Self { file, header })
+    }
+
+    /// Returns true if database file contains no allocated pages (only the FileHeader).
+    pub fn is_empty(&self) -> bool {
+        // If the next free offset is exact the size of the 0th page, that means
+        // no user or system page has been allocated.
+        (PAGE_SIZE as u64).eq(&self
+            .header
+            .next_free_offset
+            .load(Ordering::Acquire))
     }
 
     /// Reads exactly one 4KB block from the physical disk into a `Page` buffer,
@@ -1005,8 +1015,8 @@ mod tests {
             last_lsn: 100,
             has_prev: false,
             has_next: false,
-            prev_page_id: 0,
-            next_page_id: 0,
+            prev_page_id: 0.into(),
+            next_page_id: 0.into(),
             slot_array: vec![],
             records: vec![],
             free_size: 0, // Will be recalculated during encode
@@ -1051,8 +1061,8 @@ mod tests {
             last_lsn: 999,
             has_prev: true,
             has_next: true,
-            prev_page_id: 41,
-            next_page_id: 43,
+            prev_page_id: 41.into(),
+            next_page_id: 43.into(),
             // Slot array maps logical sorted order to physical record vector indices
             slot_array: vec![0, 1, 2],
             records: records.clone(),
@@ -1066,8 +1076,8 @@ mod tests {
         let decoded = BTreeNode::decode(&page)?;
         if let BTreeNode::Leaf(dec_leaf) = decoded {
             assert_eq!(dec_leaf.page_id, PageId(42));
-            assert_eq!(dec_leaf.prev_page_id, 41);
-            assert_eq!(dec_leaf.next_page_id, 43);
+            assert_eq!(dec_leaf.prev_page_id, 41.into());
+            assert_eq!(dec_leaf.next_page_id, 43.into());
             assert_eq!(dec_leaf.slot_array, vec![0, 1, 2]);
             assert_eq!(dec_leaf.records.len(), 3);
 
@@ -1101,8 +1111,8 @@ mod tests {
             last_lsn: 0,
             has_prev: false,
             has_next: false,
-            prev_page_id: 0,
-            next_page_id: 0,
+            prev_page_id: 0.into(),
+            next_page_id: 0.into(),
             slot_array,
             records,
             free_size: 0,
@@ -1188,8 +1198,8 @@ mod tests {
             last_lsn: 10,
             has_prev: false,
             has_next: false,
-            prev_page_id: 0,
-            next_page_id: 0,
+            prev_page_id: 0.into(),
+            next_page_id: 0.into(),
             slot_array: vec![0],
             records: vec![make_record(1, b"disk-test", false)],
             free_size: 0,

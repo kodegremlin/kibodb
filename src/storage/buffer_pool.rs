@@ -76,6 +76,11 @@ impl BufferPool {
         }
     }
 
+    /// Returns true if the underlying physical database is completely empty.
+    pub fn is_empty(&self) -> bool {
+        self.disk_manager.is_empty()
+    }
+
     /// Fetches a page from the buffer pool. If it's a cache miss, it reads
     /// from disk, potentially evicting an old page.
     pub fn fetch_page(&self, page_id: PageId) -> Result<Frame, Error> {
