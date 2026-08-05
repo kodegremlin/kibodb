@@ -1,4 +1,7 @@
-use std::fmt::{self, Display};
+use std::{
+    cmp::Ordering,
+    fmt::{self, Display},
+};
 
 use crate::error::Error;
 
@@ -29,13 +32,46 @@ impl DataType {
 }
 
 /// A concrete, physical value or data stored inside a Tuple.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq)]
 pub enum Value {
     BigInt(i64),
     Int(i32),
     Null,
     Boolean(bool),
     Varchar(String),
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        use Value::*;
+        match (self, other) {
+            (BigInt(a), Int(b)) => *a == *b as i64,
+            (Int(a), BigInt(b)) => (*a as i64) == *b,
+            (BigInt(a), BigInt(b)) => a == b,
+            (Int(a), Int(b)) => a == b,
+            (Null, Null) => true,
+            (Boolean(a), Boolean(b)) => a == b,
+            (Varchar(a), Varchar(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        use Value::*;
+        match (self, other) {
+            (BigInt(a), BigInt(b)) => a.partial_cmp(b),
+            (Int(a), Int(b)) => a.partial_cmp(b),
+            (Null, Null) => Some(Ordering::Equal),
+            (Null, _) | (_, Null) => None,
+            (BigInt(a), Int(b)) => a.partial_cmp(&(*b as i64)),
+            (Int(a), BigInt(b)) => (*a as i64).partial_cmp(b),
+            (Boolean(a), Boolean(b)) => a.partial_cmp(b),
+            (Varchar(a), Varchar(b)) => a.partial_cmp(b),
+            _ => None,
+        }
+    }
 }
 
 impl Display for Value {

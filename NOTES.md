@@ -1,5 +1,5 @@
 Notes will generally contain things/patterns that I could use in other projects as well, or if I just 
-discovered something amusing while writing this project.
+learnt something amusing/useful while writing this project.
 
 ## Architectural
 2. In `BTreeNode`, each node holds the Last Sequence Number (LSN) of the wal, why? 

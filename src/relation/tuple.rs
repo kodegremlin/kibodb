@@ -20,6 +20,15 @@ impl Tuple {
         Self { values }
     }
 
+    /// Extracts a reference to a specific column's value by name, or an error
+    /// if the column does not exist in the provided schema.
+    pub fn get_value(&self, schema: &Schema, col_name: &str) -> Result<&Value, Error> {
+        let idx = schema.get_col_idx(col_name)?;
+        Ok(&self.values[idx])
+    }
+}
+
+impl Tuple {
     /// Encodes the tuple in little-endian binary format and writes them into
     /// the provided writer.
     pub fn encode<W: Write>(&self, schema: &Schema, writer: &mut W) -> Result<(), Error> {
