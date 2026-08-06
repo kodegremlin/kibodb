@@ -281,11 +281,11 @@ impl<'a> Parser<'a> {
             }
             let right_table = self.parse_identifier()?;
 
-            let right_alias = if self.match_token(&Token::As)? {
-                Some(self.parse_identifier()?)
-            } else {
-                None
-            };
+            let right_alias = self
+                .match_token(&Token::As)?
+                .then(|| self.parse_identifier())
+                .transpose()?;
+
             let rhs = TableReference::BaseTable {
                 name: right_table,
                 alias: right_alias,
