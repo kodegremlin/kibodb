@@ -31,6 +31,10 @@ impl<'a> ExecutionContext<'a> {
 
 /// The Volcano execution model interface.
 pub trait Executor {
-    /// Pulls the next [Tuple] from the tree.
-    fn next(&mut self, context: ExecutionContext) -> Result<Option<Tuple>, Error>;
+    /// Fetches the next [Tuple] from the tree in the `ExecutionContext`'s buffer
+    /// and then decodes them returning the tuple.
+    ///
+    /// Returns Ok(None) if the scan was exhausted. An Err is only returned if
+    /// the method encounters any I/O error.
+    fn next(&mut self, ctx: &mut ExecutionContext) -> Result<Option<Tuple>, Error>;
 }
