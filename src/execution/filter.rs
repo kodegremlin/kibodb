@@ -4,33 +4,25 @@ use crate::{
         evaluator::Evaluator,
         executor::{ExecutionContext, Executor},
     },
-    relation::{schema::Schema, tuple::Tuple, types::Value},
-    sql::ast::Expr,
+    planner::bound_expr::BoundExpr,
+    relation::{tuple::Tuple, types::Value},
 };
 
 /// A logical executor that filters tuples based on a boolean predicate. It fetches
 /// tuples from its child executor, evaluates the provided AST expression against
 /// each tuple, and yeilds only those evaluating to `true`.
 pub struct FilterExecutor {
+    /// The logical predicate to evaluate; the WHERE clause.
+    predicate: BoundExpr,
+
     /// The child operator in the Volcano pipeline, like a SeqScan or Join.
     child: Box<dyn Executor>,
-
-    /// The logical predicate to evaluate; the WHERE clause.
-    predicate: Expr,
-
-    /// The schema of the upcoming tuples, required by the Evaluator to resolve column
-    /// names.
-    schema: Schema,
 }
 
 impl FilterExecutor {
     /// Initializes a new FilterExecutor.
-    pub fn new(child: Box<dyn Executor>, predicate: Expr, schema: Schema) -> Self {
-        Self {
-            child,
-            predicate,
-            schema,
-        }
+    pub fn new(child: Box<dyn Executor>, predicate: BoundExpr) -> Self {
+        Self { child, predicate }
     }
 }
 
@@ -40,7 +32,7 @@ impl Executor for FilterExecutor {
             let Some(tuple) = self.child.next(ctx)? else {
                 return Ok(None); // pipeline exhausted
             };
-            let eval_res = Evaluator::evaluate(&self.predicate, &tuple, &self.schema)?;
+            let eval_res = Evaluator::evaluate(&self.predicate, &tuple)?;
             match eval_res {
                 // Tuple does not satisfy predicate or is Null, loop to the next one.
                 Value::Boolean(false) | Value::Null => continue,

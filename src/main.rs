@@ -3,6 +3,7 @@
 mod catalog;
 mod error;
 mod execution;
+mod planner;
 mod relation;
 mod sql;
 mod storage;

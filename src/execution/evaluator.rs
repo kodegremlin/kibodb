@@ -1,10 +1,8 @@
 use crate::{
     error::Error,
-    relation::{schema::Schema, tuple::Tuple, types::Value},
-    sql::{
-        ast::{BinaryOperator, Expr},
-        parser::AstLiteral,
-    },
+    planner::bound_expr::BoundExpr,
+    relation::{tuple::Tuple, types::Value},
+    sql::{ast::BinaryOperator, parser::AstLiteral},
 };
 
 /// A stateless engine that computes the expressions of the SQL we've parsed.
@@ -19,21 +17,22 @@ pub struct Evaluator;
 
 impl Evaluator {
     /// Recursively evaluates an AST expression against a Tuple.
-    pub fn evaluate(expr: &Expr, tuple: &Tuple, schema: &Schema) -> Result<Value, Error> {
+    pub fn evaluate(expr: &BoundExpr, tuple: &Tuple) -> Result<Value, Error> {
         match expr {
-            Expr::Column(col_ref) => {
-                let val = tuple.get_value(schema, &col_ref.column_name)?;
-                Ok(val.clone())
+            BoundExpr::ColumnRef { index, .. } => {
+                tuple.values.get(*index).cloned().ok_or_else(|| {
+                    Error::CorruptPage(format!(
+                        "tuple index={} out of bounds during evaluation",
+                        index
+                    ))
+                })
             }
-            Expr::Literal(lit) => Ok(Self::eval_literal(lit)),
-            Expr::BinaryOp { left, op, right } => {
-                let left_val = Self::evaluate(left, tuple, schema)?;
-                let right_val = Self::evaluate(right, tuple, schema)?;
+            BoundExpr::BinaryOp { left, op, right } => {
+                let left_val = Self::evaluate(left, tuple)?;
+                let right_val = Self::evaluate(right, tuple)?;
                 Self::eval_binary_op(&left_val, *op, &right_val)
             }
-            Expr::Average(_) | Expr::Count(_) => Err(Error::SyntaxErr(
-                "aggregate functions cannot be evaluated in linear context".into(),
-            )),
+            BoundExpr::Constant(val) => Ok(val.clone()),
         }
     }
 
