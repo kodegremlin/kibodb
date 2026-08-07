@@ -251,11 +251,11 @@ impl<'a> Parser<'a> {
         self.consume(&Token::From)?;
         let base_table = self.parse_identifier()?;
 
-        let base_alias = if self.match_token(&Token::As)? {
-            Some(self.parse_identifier()?)
-        } else {
-            None
-        };
+        let base_alias = self
+            .match_token(&Token::As)?
+            .then(|| self.parse_identifier())
+            .transpose()?;
+
         let mut curr_lhs = TableReference::BaseTable {
             name: base_table,
             alias: base_alias,
