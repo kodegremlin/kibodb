@@ -19,7 +19,7 @@ impl Evaluator {
     /// Recursively evaluates an AST expression against a Tuple.
     pub fn evaluate(expr: &BoundExpr, tuple: &Tuple) -> Result<Value, Error> {
         match expr {
-            BoundExpr::ColumnRef { index, .. } => {
+            BoundExpr::ColumnRef { col_idx: index, .. } => {
                 tuple.values.get(*index).cloned().ok_or_else(|| {
                     Error::CorruptPage(format!(
                         "tuple index={} out of bounds during evaluation",

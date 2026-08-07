@@ -2,6 +2,9 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error("caught me with my pants down huh...well {0}")]
+    NotImplementedYet(String),
+
     #[error("page {0} not found in store")]
     PageNotFound(u64),
 

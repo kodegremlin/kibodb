@@ -14,7 +14,7 @@ pub enum BoundExpr {
     ColumnRef {
         /// The physical index of the column in the tuple's
         /// value array.
-        index: usize,
+        col_idx: usize,
         /// The verified data type of the column.
         data_type: DataType,
     },
