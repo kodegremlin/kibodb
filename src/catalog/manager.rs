@@ -307,8 +307,8 @@ impl CatalogManager {
 
         if table_indexes.contains_key(&index_name) {
             return Err(Error::Duplicate(format!(
-                "index {} already exists",
-                index_name
+                "index '{}' already exists in table '{}'",
+                index_name, table_name
             )));
         }
         let (root_page_id, root_frame) = pool.new_page(true)?;
