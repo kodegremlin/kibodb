@@ -35,8 +35,11 @@ pub enum Error {
     #[error("Syntax Error: {}", 0)]
     SyntaxErr(String),
 
-    #[error("column not found: column_name={0}")]
+    #[error("column not found: column_name={}", 0)]
     ColumnNotFound(String),
+
+    #[error("DuplicatesNotAllowed: {}", 0)]
+    Duplicate(String),
 
     #[error("requested table was not found: table_name={0}")]
     TableNotFound(String),

@@ -6,12 +6,12 @@ use std::{
 };
 
 use crate::{
-    catalog,
+    catalog::{sys_index_schema, sys_pages_schema, sys_schema_schema},
     error::Error,
     relation::{
         schema::{Column, Schema},
         tuple::Tuple,
-        types::DataType,
+        types::{DataType, Value},
     },
     storage::{
         bptree::BpTree,
@@ -45,7 +45,7 @@ pub struct CatalogManager {
     table_roots: HashMap<String, PageId>,
 
     /// Maps a table name to its logical [Schema] definition.
-    table_schema: HashMap<String, Schema>,
+    table_schemas: HashMap<String, Schema>,
 
     /// Tracks secondary indexes: Map<TableName, Map<IndexName, IndexMeta>>
     index_roots: HashMap<String, HashMap<String, IndexMeta>>,
@@ -67,7 +67,7 @@ impl CatalogManager {
     pub fn new() -> Self {
         Self {
             table_roots: HashMap::new(),
-            table_schema: HashMap::new(),
+            table_schemas: HashMap::new(),
             index_roots: HashMap::new(),
             table_row_ids: HashMap::new(),
             next_sys_row_id: AtomicU64::new(1),
@@ -80,28 +80,30 @@ impl CatalogManager {
         if pool.is_empty() {
             self.initialize_new_database(pool)?;
         }
-        let sys_pages_schema = catalog::sys_pages_schema();
-
         // Load `sys_pages` as {table_name -> root_page_id} in the catalog map
-        Self::scan_system_table(pool, SYS_TABLE_ROOTS_ROOT_ID, &sys_pages_schema, |tuple| {
-            let table_name = tuple.values[0]
-                .varchar_to_str()
-                .ok_or_else(|| Error::CorruptPage("sys_pages table_name is not Varchar".into()))?;
+        Self::scan_system_table(
+            pool,
+            SYS_TABLE_ROOTS_ROOT_ID,
+            &sys_pages_schema(),
+            |tuple| {
+                let table_name = tuple.values[0].varchar_to_str().ok_or_else(|| {
+                    Error::CorruptPage("sys_pages table_name is not Varchar".into())
+                })?;
 
-            let root_page_id = tuple.values[1]
-                .bigint_to_i64()
-                .ok_or_else(|| Error::CorruptPage("sys_pages root_page_id is not BigInt".into()))?;
+                let root_page_id = tuple.values[1].bigint_to_i64().ok_or_else(|| {
+                    Error::CorruptPage("sys_pages root_page_id is not BigInt".into())
+                })?;
 
-            self.table_roots
-                .insert(table_name.to_string(), PageId(root_page_id as u64));
-            Ok(())
-        })?;
+                self.table_roots
+                    .insert(table_name.to_string(), PageId(root_page_id as u64));
+                Ok(())
+            },
+        )?;
 
         let mut raw_columns: HashMap<String, Vec<Column>> = HashMap::new();
-        let sys_schema_schema = catalog::sys_schema_schema();
 
         // Load `sys_schema` as {table_name -> vec[columns]} in temp raw_columns
-        Self::scan_system_table(pool, SYS_SCHEMAS_ROOT_ID, &sys_schema_schema, |tuple| {
+        Self::scan_system_table(pool, SYS_SCHEMAS_ROOT_ID, &sys_schema_schema(), |tuple| {
             let table_name = tuple.values[0]
                 .varchar_to_str()
                 .ok_or_else(|| Error::CorruptPage("sys_schema table_name is not Varchar".into()))?;
@@ -132,11 +134,9 @@ impl CatalogManager {
             .into_iter()
             .map(|(name, col)| (name, Schema::new(col)));
 
-        self.table_schema.extend(raw_col_iterator);
+        self.table_schemas.extend(raw_col_iterator);
 
-        let sys_index_schema = catalog::sys_index_schema();
-
-        Self::scan_system_table(pool, SYS_INDEXES_ROOT_ID, &sys_index_schema, |tuple| {
+        Self::scan_system_table(pool, SYS_INDEXES_ROOT_ID, &sys_index_schema(), |tuple| {
             let table_name = tuple.values[0]
                 .varchar_to_str()
                 .ok_or_else(|| Error::CorruptPage("sys_index table_name is not varchar".into()))?;
@@ -207,7 +207,7 @@ impl CatalogManager {
 
     /// Retrieves the logical Schema for a given table name.
     pub fn get_table_schema(&self, table_name: &str) -> Result<&Schema, Error> {
-        self.table_schema
+        self.table_schemas
             .get(table_name)
             .ok_or_else(|| Error::TableNotFound(table_name.into()))
     }
@@ -215,6 +215,131 @@ impl CatalogManager {
     /// Retrieves all secondary indexes associated with a specific table.
     pub fn get_table_indexes(&self, table_name: &str) -> Option<&HashMap<String, IndexMeta>> {
         self.index_roots.get(table_name)
+    }
+
+    /// Allocates a new table, writing its metadata to the system catalogs:
+    /// `sys_table_roots and sys_schemas`.
+    pub fn create_table(
+        &mut self,
+        pool: &mut BufferPool,
+        table_name: String,
+        schema: Schema,
+        lsn: u64,
+    ) -> Result<(), Error> {
+        if self.table_roots.contains_key(&table_name) {
+            return Err(Error::Duplicate(format!(
+                "table '{}' already exists",
+                table_name
+            )));
+        }
+        let (root_page_id, root_frame) = pool.new_page(true)?;
+        root_frame.write().mark_dirty(lsn);
+
+        // Inserting into sys_table_roots_page
+        let mut sys_table_roots_tree = BpTree::new(pool, SYS_TABLE_ROOTS_ROOT_ID);
+        let page_root_tuple = Tuple::new(vec![
+            Value::Varchar(table_name.clone()),
+            Value::BigInt(
+                i64::try_from(root_page_id.0).expect("new table's page id exceeded i64 Max"),
+            ),
+        ]);
+
+        let mut roots_buffer = Vec::new();
+        page_root_tuple.encode(&sys_pages_schema(), &mut roots_buffer)?;
+
+        let sys_row_id = self
+            .next_sys_row_id
+            .fetch_add(1, Ordering::SeqCst);
+
+        sys_table_roots_tree.insert(sys_row_id, roots_buffer, lsn)?;
+
+        // Insert into sys_schema_page
+        let mut sys_schema_tree = BpTree::new(pool, SYS_SCHEMAS_ROOT_ID);
+        let sys_schema = sys_schema_schema();
+
+        for col in &schema.columns {
+            let schema_tuple = Tuple::new(vec![
+                Value::Varchar(table_name.clone()),
+                Value::Varchar(col.name.clone()),
+                Value::Int(col.data_type as i32),
+                Value::Int(col.length.unwrap_or(0) as i32),
+            ]);
+            let mut schema_buffer = Vec::new();
+            schema_tuple.encode(&sys_schema, &mut schema_buffer)?;
+
+            let sys_row_id = self
+                .next_sys_row_id
+                .fetch_add(1, Ordering::SeqCst);
+
+            sys_schema_tree.insert(sys_row_id, schema_buffer, lsn)?;
+        }
+        // Update in-memory cache
+        self.table_roots
+            .insert(table_name.clone(), root_page_id);
+        self.table_schemas
+            .insert(table_name.clone(), schema);
+        self.table_row_ids
+            .insert(table_name, AtomicU64::new(1));
+        Ok(())
+    }
+
+    /// Allocates a new secondary index for a table, writing metadata to `sys_indexes`.
+    pub fn create_index(
+        &mut self,
+        pool: &mut BufferPool,
+        index_name: String,
+        table_name: String,
+        col_name: String,
+        is_unique: bool,
+        lsn: u64,
+    ) -> Result<(), Error> {
+        let table_schema = self.get_table_schema(&table_name)?;
+        if table_schema.get_col_idx(&col_name).is_err() {
+            return Err(Error::ColumnNotFound(format!(
+                "column '{}' does not exist in table '{}'",
+                col_name, table_name
+            )));
+        }
+        let table_indexes = self
+            .index_roots
+            .entry(table_name.clone())
+            .or_default();
+
+        if table_indexes.contains_key(&index_name) {
+            return Err(Error::Duplicate(format!(
+                "index {} already exists",
+                index_name
+            )));
+        }
+        let (root_page_id, root_frame) = pool.new_page(true)?;
+        root_frame.write().mark_dirty(lsn);
+
+        let mut sys_index_tree = BpTree::new(pool, root_page_id);
+        let index_tuple = Tuple::new(vec![
+            Value::Varchar(table_name.clone()),
+            Value::Varchar(index_name.clone()),
+            Value::Boolean(is_unique),
+            Value::BigInt(
+                i64::try_from(root_page_id.0).expect("new index's page id exceeded i64 Max"),
+            ),
+            Value::Varchar(col_name.clone()),
+        ]);
+        let mut index_buffer = Vec::new();
+        index_tuple.encode(&sys_index_schema(), &mut index_buffer)?;
+
+        let sys_row_id = self
+            .next_sys_row_id
+            .fetch_add(1, Ordering::SeqCst);
+        sys_index_tree.insert(sys_row_id, index_buffer, lsn)?;
+
+        let index_meta = IndexMeta {
+            index_name: index_name.clone(),
+            col_name,
+            root_page_id,
+            is_unique,
+        };
+        table_indexes.insert(index_name, index_meta);
+        Ok(())
     }
 
     /// Locates and Reads system pages into memory and processes them against the
