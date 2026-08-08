@@ -1,4 +1,9 @@
-use std::{collections::HashMap, io::Cursor};
+use std::{
+    cmp,
+    collections::HashMap,
+    io::Cursor,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use crate::{
     catalog,
@@ -9,6 +14,7 @@ use crate::{
         types::DataType,
     },
     storage::{
+        bptree::BpTree,
         buffer_pool::BufferPool,
         page::{BTreeNode, PageId},
     },
@@ -16,6 +22,16 @@ use crate::{
 
 pub const SYS_PAGES_ROOT_ID: PageId = PageId(1);
 pub const SYS_SCHEMA_ROOT_ID: PageId = PageId(2);
+pub const SYS_INDEXES_ROOT_ID: PageId = PageId(3);
+
+/// Represents the physical and logical properties of a secondary index.
+#[derive(Debug, Clone)]
+pub struct IndexMeta {
+    pub index_name: String,
+    pub col_name: String,
+    pub root_page_id: PageId,
+    pub is_unique: bool,
+}
 
 /// The in-memory metadata cache for the entire database.
 ///
@@ -30,6 +46,20 @@ pub struct CatalogManager {
 
     /// Maps a table name to its logical [Schema] definition.
     table_schema: HashMap<String, Schema>,
+
+    /// Tracks secondary indexes: Map<TableName, Map<IndexName, IndexMeta>>
+    index_roots: HashMap<String, HashMap<String, IndexMeta>>,
+
+    /// Monotonic counters for primary key generation per table. Atomic for
+    /// interior mutability across thread boundaries.
+    table_row_ids: HashMap<String, AtomicU64>,
+
+    /// Monotonic counter for inserting into the system catalog themselves.
+    /// Only a single counter for all the 3 pages because it doesn't really
+    /// matter for our use case since they only need to be unique and this
+    /// will be unique. Plus its simpler this way, instead of having to manage
+    /// 3 different ids.
+    next_sys_row_id: AtomicU64,
 }
 
 impl CatalogManager {
@@ -38,6 +68,9 @@ impl CatalogManager {
         Self {
             table_roots: HashMap::new(),
             table_schema: HashMap::new(),
+            index_roots: HashMap::new(),
+            table_row_ids: HashMap::new(),
+            next_sys_row_id: AtomicU64::new(1),
         }
     }
 
@@ -63,7 +96,8 @@ impl CatalogManager {
                 .insert(table_name.to_string(), PageId(root_page_id as u64));
             Ok(())
         })?;
-        let mut raw_columns = HashMap::new();
+
+        let mut raw_columns: HashMap<String, Vec<Column>> = HashMap::new();
         let sys_schema_schema = catalog::sys_schema_schema();
 
         // Load `sys_schema` as {table_name -> vec[columns]} in temp raw_columns
@@ -84,22 +118,79 @@ impl CatalogManager {
                 .int_to_i32()
                 .ok_or_else(|| Error::CorruptPage("sys_schema field_length is not Int".into()))?;
 
-            let data_type = DataType::from_u8(field_type as u8)?;
             let length = (field_length > 0).then_some(field_length as u32);
+            let data_type = DataType::from_u8(field_type as u8)?;
 
             let column = Column::new(field_name, data_type, length);
             raw_columns
                 .entry(table_name.to_string())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(column);
             Ok(())
         })?;
-        self.table_schema.extend(
-            raw_columns
-                .into_iter()
-                .map(|(name, col)| (name, Schema::new(col))),
-        );
+        let raw_col_iterator = raw_columns
+            .into_iter()
+            .map(|(name, col)| (name, Schema::new(col)));
+
+        self.table_schema.extend(raw_col_iterator);
+
+        let sys_index_schema = catalog::sys_index_schema();
+
+        Self::scan_system_table(pool, SYS_INDEXES_ROOT_ID, &sys_index_schema, |tuple| {
+            let table_name = tuple.values[0]
+                .varchar_to_str()
+                .ok_or_else(|| Error::CorruptPage("sys_index table_name is not varchar".into()))?;
+
+            let index_name = tuple.values[1]
+                .varchar_to_str()
+                .ok_or_else(|| Error::CorruptPage("sys_index index_name is not Varchar".into()))?;
+
+            let col_name = tuple.values[2]
+                .varchar_to_str()
+                .ok_or_else(|| Error::CorruptPage("sys_index col_name is not Varchar".into()))?;
+
+            let root_page_id = tuple.values[3]
+                .bigint_to_i64()
+                .ok_or_else(|| Error::CorruptPage("sys_index root_page_id is not BigInt".into()))?;
+
+            let is_unique = tuple.values[4]
+                .boolean_to_bool()
+                .ok_or_else(|| Error::CorruptPage("sys_index is_unique is not Boolean".into()))?;
+
+            let index_meta = IndexMeta {
+                index_name: index_name.to_string(),
+                col_name: col_name.to_string(),
+                root_page_id: PageId(root_page_id as u64),
+                is_unique,
+            };
+            self.index_roots
+                .entry(table_name.into())
+                .or_default()
+                .insert(index_name.into(), index_meta);
+            Ok(())
+        })?;
+        let mut max_sys_id = 0;
+        for &sys_id in &[SYS_PAGES_ROOT_ID, SYS_SCHEMA_ROOT_ID, SYS_INDEXES_ROOT_ID] {
+            let max_val = BpTree::new(pool, sys_id).get_max_row_id()?;
+            max_sys_id = cmp::max(max_sys_id, max_val);
+        }
+        self.next_sys_row_id = AtomicU64::new(max_sys_id + 1);
+
+        for (name, &root_id) in &self.table_roots {
+            let max_val = BpTree::new(pool, root_id).get_max_row_id()?;
+            self.table_row_ids
+                .insert(name.clone(), AtomicU64::new(max_val + 1));
+        }
         Ok(())
+    }
+
+    /// Thread-safe generator for the next monotonic primary key of a table.
+    pub fn generate_next_row_id(&self, table_name: &str) -> Result<u64, Error> {
+        let counter = self
+            .table_row_ids
+            .get(table_name)
+            .ok_or_else(|| Error::TableNotFound(table_name.to_string()))?;
+        Ok(counter.fetch_add(1, Ordering::SeqCst))
     }
 
     /// Retrieves the physical root PageId for a given table name.
@@ -115,6 +206,11 @@ impl CatalogManager {
         self.table_schema
             .get(table_name)
             .ok_or_else(|| Error::TableNotFound(table_name.into()))
+    }
+
+    /// Retrieves all secondary indexes associated with a specific table.
+    pub fn get_table_indexes(&self, table_name: &str) -> Option<&HashMap<String, IndexMeta>> {
+        self.index_roots.get(table_name)
     }
 
     /// Locates and Reads system pages into memory and processes them against the
@@ -173,23 +269,18 @@ impl CatalogManager {
     /// Allocates the baseline system pages for a completely fresh database.
     fn initialize_new_database(&mut self, pool: &mut BufferPool) -> Result<(), Error> {
         let (p1_id, p1_frame) = pool.new_page(true)?;
-        if p1_id != SYS_PAGES_ROOT_ID {
-            return Err(Error::CorruptPage(format!(
-                "failed to allocate sys_pages at PageId 1, got={:?}",
-                p1_id
-            )));
+        let (p2_id, p2_frame) = pool.new_page(true)?;
+        let (p3_id, p3_frame) = pool.new_page(true)?;
+
+        if p1_id != SYS_PAGES_ROOT_ID || p2_id != SYS_SCHEMA_ROOT_ID || p3_id != SYS_INDEXES_ROOT_ID
+        {
+            return Err(Error::CorruptPage(
+                "failed to allocate system pages sequentially".into(),
+            ));
         }
         p1_frame.write().mark_dirty(0);
-
-        let (p2_id, p2_frame) = pool.new_page(true)?;
-        if p2_id != SYS_SCHEMA_ROOT_ID {
-            return Err(Error::CorruptPage(format!(
-                "failed to allocate sys_schema at PageId 2, got={:?}",
-                p2_id
-            )));
-        }
         p2_frame.write().mark_dirty(0);
-
+        p3_frame.write().mark_dirty(0);
         pool.flush_all_pages()?;
         Ok(())
     }

@@ -87,7 +87,7 @@ impl Display for Value {
 }
 
 impl Value {
-    /// Returns the string from the varchar type.
+    /// Returns the string from the `Varchar` type.
     pub fn varchar_to_str(&self) -> Option<&str> {
         if let Value::Varchar(val) = self {
             Some(val)
@@ -96,7 +96,7 @@ impl Value {
         }
     }
 
-    /// Returns the value from the bigint type.
+    /// Returns the value from the `BigInt` type.
     pub fn bigint_to_i64(&self) -> Option<i64> {
         if let Value::BigInt(val) = self {
             Some(*val)
@@ -105,9 +105,18 @@ impl Value {
         }
     }
 
-    /// Returns the value from the int type.
+    /// Returns the value from the `Int` type.
     pub fn int_to_i32(&self) -> Option<i32> {
         if let Value::Int(val) = self {
+            Some(*val)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the value from the `Boolean` type.
+    pub fn boolean_to_bool(&self) -> Option<bool> {
+        if let Value::Boolean(val) = self {
             Some(*val)
         } else {
             None
