@@ -18,6 +18,10 @@ use crate::{
 
 pub(crate) mod bound_expr;
 
+/// The Query Transpiler. It is responsible for Semantic Analysis of the given Query
+/// ensuring its correctness and binding it to intermediate data.
+/// It validates Ast nodes against the Catalog, performs type checking, and constructs
+/// a ready to run Volcano execution pipeline.
 pub struct Planner<'a> {
     catalog: &'a CatalogManager,
 }
