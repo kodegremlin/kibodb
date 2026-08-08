@@ -12,8 +12,8 @@ use crate::{
 };
 
 /// Fixed size of the physical Wal entry header in bytes.
-/// op(1) + lsn(8) + page_id(8) + row_id(4) + val_len(4) = 25 bytes.
-pub const WAL_ENTRY_HEADER_SIZE: usize = 29;
+/// op(1) + txn_id(8) + lsn(8) + page_id(8) + row_id(8) + val_len(4) = 37 bytes.
+pub const WAL_ENTRY_HEADER_SIZE: usize = 37;
 
 /// Represents the physical operation recorded in the log.
 #[repr(u8)]
@@ -48,6 +48,8 @@ impl WalOp {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WalEntry {
     pub opcode: WalOp,
+    /// Unifies multiple operations into one atomic batch.
+    pub txn_id: u64,
     pub lsn: u64,
     pub page_id: PageId,
     pub row_id: u64,
@@ -56,9 +58,17 @@ pub struct WalEntry {
 
 impl WalEntry {
     /// Constructor for the `WalEntry`.
-    pub fn new(opcode: WalOp, lsn: u64, page_id: PageId, row_id: u64, payload: Vec<u8>) -> Self {
+    pub fn new(
+        opcode: WalOp,
+        txn_id: u64,
+        lsn: u64,
+        page_id: PageId,
+        row_id: u64,
+        payload: Vec<u8>,
+    ) -> Self {
         Self {
             opcode,
+            txn_id,
             lsn,
             page_id,
             row_id,
@@ -74,6 +84,7 @@ impl WalEntry {
 
         buffer.push(self.opcode.as_u8());
 
+        buffer.extend_from_slice(&self.txn_id.to_le_bytes());
         buffer.extend_from_slice(&self.lsn.to_le_bytes());
         buffer.extend_from_slice(&self.page_id.0.to_le_bytes());
         buffer.extend_from_slice(&self.row_id.to_le_bytes());
@@ -102,10 +113,11 @@ impl WalEntry {
             )));
         }
         let opcode = WalOp::from_u8(buffer[0])?;
-        let lsn = u64::from_le_bytes(buffer[1..9].try_into().unwrap());
-        let page_id = PageId(u64::from_le_bytes(buffer[9..17].try_into().unwrap()));
-        let row_id = u64::from_le_bytes(buffer[17..25].try_into().unwrap());
-        let payload_len = u32::from_le_bytes(buffer[25..29].try_into().unwrap()) as usize;
+        let txn_id = u64::from_le_bytes(buffer[1..9].try_into().unwrap());
+        let lsn = u64::from_le_bytes(buffer[9..17].try_into().unwrap());
+        let page_id = u64::from_le_bytes(buffer[17..25].try_into().unwrap()).into();
+        let row_id = u64::from_le_bytes(buffer[25..33].try_into().unwrap());
+        let payload_len = u32::from_le_bytes(buffer[33..37].try_into().unwrap()) as usize;
 
         // Verify net buffer size against calculated payload size.
         let expected_size = WAL_ENTRY_HEADER_SIZE + payload_len;
@@ -116,9 +128,10 @@ impl WalEntry {
                 buffer.len()
             )));
         }
-        let payload = buffer[29..expected_size].to_vec();
+        let payload = buffer[37..expected_size].to_vec();
         Ok(Self {
             opcode,
+            txn_id,
             lsn,
             page_id,
             row_id,
@@ -331,6 +344,7 @@ mod tests {
     fn test_wal_entry_symmetry_and_layout() {
         let original_entry = WalEntry {
             opcode: WalOp::Update,
+            txn_id: 0,
             lsn: 1048576,
             page_id: PageId(8192),
             row_id: 42,
@@ -342,7 +356,7 @@ mod tests {
         // Verify exact byte sizing: 29 header bytes + 4 payload bytes = 33 bytes
         assert_eq!(
             encoded.len(),
-            33,
+            33 + 8,
             "encoded buffer size must match header + payload length"
         );
 
@@ -373,9 +387,9 @@ mod tests {
         dbg!(&path);
 
         let batch_out = vec![
-            WalEntry::new(WalOp::Insert, 10, PageId(1), 0, vec![1, 2, 3]),
-            WalEntry::new(WalOp::Update, 11, PageId(1), 0, vec![6, 9, 6, 9]),
-            WalEntry::new(WalOp::Delete, 12, PageId(2), 5, vec![]),
+            WalEntry::new(WalOp::Insert, 0, 10, PageId(1), 0, vec![1, 2, 3]),
+            WalEntry::new(WalOp::Update, 0, 11, PageId(1), 0, vec![6, 9, 6, 9]),
+            WalEntry::new(WalOp::Delete, 0, 12, PageId(2), 5, vec![]),
         ];
         {
             let mut wal = WalManager::open(&path, true).expect("failed to open Wal");
@@ -408,6 +422,7 @@ mod tests {
         let mut wal = WalManager::open(&path, false).expect("opening wal should not fail");
         let batch = vec![WalEntry::new(
             WalOp::Insert,
+            0,
             1,
             PageId(10),
             1,
@@ -453,6 +468,7 @@ mod tests {
         let mut wal = WalManager::open(&path, false).unwrap();
         let batch = vec![WalEntry::new(
             WalOp::Insert,
+            0,
             50,
             PageId(1),
             1,
@@ -481,6 +497,7 @@ mod tests {
         let mut wal = WalManager::open(&path, false).unwrap();
         let batch = vec![WalEntry::new(
             WalOp::Insert,
+            0,
             100,
             PageId(5),
             1,

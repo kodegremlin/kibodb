@@ -148,9 +148,9 @@ mod tests {
         pool.flush_all_pages().unwrap();
 
         let batch = vec![
-            WalEntry::new(WalOp::Insert, 50, page_id, 1, vec![99, 99]), // old: should be skipped
-            WalEntry::new(WalOp::Insert, 100, page_id, 1, vec![10, 20]), // same: should be skipped
-            WalEntry::new(WalOp::Update, 150, page_id, 1, vec![88, 88]), // new: should be applied
+            WalEntry::new(WalOp::Insert, 0, 50, page_id, 1, vec![99, 99]), // old: should be skipped
+            WalEntry::new(WalOp::Insert, 0, 100, page_id, 1, vec![10, 20]), // same: should be skipped
+            WalEntry::new(WalOp::Update, 0, 150, page_id, 1, vec![88, 88]), // new: should be applied
         ];
         let max_lsn = RecoveryEngine::replay(&mut pool, &batch).expect("replay failed");
         assert_eq!(max_lsn, 150);
@@ -181,6 +181,7 @@ mod tests {
             let mut wal = WalManager::open(&path, true).unwrap();
             let batch = vec![WalEntry::new(
                 WalOp::Insert,
+                0,
                 10,
                 page_id,
                 42,
