@@ -20,8 +20,8 @@ use crate::{
     },
 };
 
-pub const SYS_PAGES_ROOT_ID: PageId = PageId(1);
-pub const SYS_SCHEMA_ROOT_ID: PageId = PageId(2);
+pub const SYS_TABLE_ROOTS_ROOT_ID: PageId = PageId(1);
+pub const SYS_SCHEMAS_ROOT_ID: PageId = PageId(2);
 pub const SYS_INDEXES_ROOT_ID: PageId = PageId(3);
 
 /// Represents the physical and logical properties of a secondary index.
@@ -83,7 +83,7 @@ impl CatalogManager {
         let sys_pages_schema = catalog::sys_pages_schema();
 
         // Load `sys_pages` as {table_name -> root_page_id} in the catalog map
-        Self::scan_system_table(pool, SYS_PAGES_ROOT_ID, &sys_pages_schema, |tuple| {
+        Self::scan_system_table(pool, SYS_TABLE_ROOTS_ROOT_ID, &sys_pages_schema, |tuple| {
             let table_name = tuple.values[0]
                 .varchar_to_str()
                 .ok_or_else(|| Error::CorruptPage("sys_pages table_name is not Varchar".into()))?;
@@ -101,7 +101,7 @@ impl CatalogManager {
         let sys_schema_schema = catalog::sys_schema_schema();
 
         // Load `sys_schema` as {table_name -> vec[columns]} in temp raw_columns
-        Self::scan_system_table(pool, SYS_SCHEMA_ROOT_ID, &sys_schema_schema, |tuple| {
+        Self::scan_system_table(pool, SYS_SCHEMAS_ROOT_ID, &sys_schema_schema, |tuple| {
             let table_name = tuple.values[0]
                 .varchar_to_str()
                 .ok_or_else(|| Error::CorruptPage("sys_schema table_name is not Varchar".into()))?;
@@ -170,7 +170,11 @@ impl CatalogManager {
             Ok(())
         })?;
         let mut max_sys_id = 0;
-        for &sys_id in &[SYS_PAGES_ROOT_ID, SYS_SCHEMA_ROOT_ID, SYS_INDEXES_ROOT_ID] {
+        for &sys_id in &[
+            SYS_TABLE_ROOTS_ROOT_ID,
+            SYS_SCHEMAS_ROOT_ID,
+            SYS_INDEXES_ROOT_ID,
+        ] {
             let max_val = BpTree::new(pool, sys_id).get_max_row_id()?;
             max_sys_id = cmp::max(max_sys_id, max_val);
         }
@@ -272,7 +276,9 @@ impl CatalogManager {
         let (p2_id, p2_frame) = pool.new_page(true)?;
         let (p3_id, p3_frame) = pool.new_page(true)?;
 
-        if p1_id != SYS_PAGES_ROOT_ID || p2_id != SYS_SCHEMA_ROOT_ID || p3_id != SYS_INDEXES_ROOT_ID
+        if p1_id != SYS_TABLE_ROOTS_ROOT_ID
+            || p2_id != SYS_SCHEMAS_ROOT_ID
+            || p3_id != SYS_INDEXES_ROOT_ID
         {
             return Err(Error::CorruptPage(
                 "failed to allocate system pages sequentially".into(),
