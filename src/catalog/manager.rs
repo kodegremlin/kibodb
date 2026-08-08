@@ -1,9 +1,9 @@
 use std::{collections::HashMap, io::Cursor};
 
 use crate::{
+    catalog,
     error::Error,
     relation::{
-        catalog::{sys_pages_schema, sys_schema_schema},
         schema::{Column, Schema},
         tuple::Tuple,
         types::DataType,
@@ -47,7 +47,7 @@ impl CatalogManager {
         if pool.is_empty() {
             self.initialize_new_database(pool)?;
         }
-        let sys_pages_schema = sys_pages_schema();
+        let sys_pages_schema = catalog::sys_pages_schema();
 
         // Load `sys_pages` as {table_name -> root_page_id} in the catalog map
         Self::scan_system_table(pool, SYS_PAGES_ROOT_ID, &sys_pages_schema, |tuple| {
@@ -64,7 +64,7 @@ impl CatalogManager {
             Ok(())
         })?;
         let mut raw_columns = HashMap::new();
-        let sys_schema_schema = sys_schema_schema();
+        let sys_schema_schema = catalog::sys_schema_schema();
 
         // Load `sys_schema` as {table_name -> vec[columns]} in temp raw_columns
         Self::scan_system_table(pool, SYS_SCHEMA_ROOT_ID, &sys_schema_schema, |tuple| {

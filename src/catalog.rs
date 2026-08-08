@@ -1,3 +1,5 @@
+pub(crate) mod manager;
+
 use crate::relation::{
     schema::{Column, Schema},
     types::DataType,
